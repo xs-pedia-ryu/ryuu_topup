@@ -354,7 +354,6 @@ async function settleDeposit(userId, trxId, status, balance = 0) {
 }
 
 // ================= CREATE DEPOSIT XS-PEDIA =================
-// ================= CREATE DEPOSIT XS-PEDIA =================
 router.get("/deposit/create", validateApiKey, async (req, res) => {
   const { user } = req;
   const { nominal } = req.query;
@@ -416,42 +415,50 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     }
 
     const paymentData = result.data;
-    const rawQrImage = paymentData.qr || "";
-    const qrisString = paymentData.qrisString || "";
-    const providerPaymentId = paymentData.paymentId;
+    
+    // PERBAIKAN 1: Cari ID transaksi dari berbagai kemungkinan properti response XS-Pedia
+    const providerPaymentId = paymentData.id || paymentData.paymentId || paymentData.trx_id || paymentData.reference_id;
+    const rawQrImage = paymentData.qr || paymentData.qr_image || paymentData.qr_url || "";
+    const qrisString = paymentData.qrisString || paymentData.qris_string || paymentData.qris || "";
 
-    if (!rawQrImage || !qrisString || !providerPaymentId) {
+    if (!rawQrImage || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "Response QRIS XS-Pedia tidak lengkap."
+        message: "Response QRIS XS-Pedia tidak lengkap (QR atau ID Kosong)."
       });
     }
 
-    // Gunakan paymentId dari XS-Pedia sebagai ID utama transaksi
-    const trxId = providerPaymentId;
+    const trxId = String(providerPaymentId);
     const nominalAsli = parsedNominal;
 
-    let pCreatedAt = paymentData.createdAt
-      ? new Date(typeof paymentData.createdAt === "number" ? paymentData.createdAt : paymentData.createdAt).toISOString()
-      : new Date().toISOString();
+    // PERBAIKAN 2: Safe Parsing Date
+    let pCreatedAt = new Date().toISOString();
+    if (paymentData.createdAt) {
+      pCreatedAt = new Date(paymentData.createdAt).toISOString();
+    }
 
-    let pExpiresAt = paymentData.expiresAt
-      ? new Date(typeof paymentData.expiresAt === "number" ? paymentData.expiresAt : paymentData.expiresAt).toISOString()
-      : null;
+    let pExpiresAt = null;
+    if (paymentData.expiresAt) {
+      pExpiresAt = new Date(paymentData.expiresAt).toISOString();
+    } else {
+      pExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    }
 
-    const bgUrl = DEFAULT_BG_URL;
+    const bgUrl = typeof DEFAULT_BG_URL !== 'undefined' ? DEFAULT_BG_URL : '';
 
     // ================= BACKGROUND / COMPOSITE =================
     let compositeQrUrl = rawQrImage;
-    try {
-      const generated = await createQrisComposite({
-        trxId,
-        qrisImageUrl: rawQrImage,
-        qrisString
-      });
-      compositeQrUrl = `${req.protocol}://${req.get("host")}/media/generated-qris/${generated.filename}`;
-    } catch (e) {
-      console.error("QR Composite Error:", e.message);
+    if (typeof createQrisComposite === 'function') {
+      try {
+        const generated = await createQrisComposite({
+          trxId,
+          qrisImageUrl: rawQrImage,
+          qrisString
+        });
+        compositeQrUrl = `${req.protocol}://${req.get("host")}/media/generated-qris/${generated.filename}`;
+      } catch (e) {
+        console.error("QR Composite Error:", e.message);
+      }
     }
 
     // ================= HISTORY =================
@@ -468,8 +475,8 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       get_balance: nominalAsli,
       provider_amount: paymentData.amount || providerAmount,
       provider: "xs-pedia",
-      provider_id: providerPaymentId,
-      provider_reference_id: providerPaymentId,
+      provider_id: trxId,
+      provider_reference_id: trxId,
       provider_status: paymentData.status || "pending",
       provider_time: null,
       provider_expires_at: pExpiresAt,
@@ -529,7 +536,6 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           return;
         }
 
-        // Live check ke API v1 /status
         const checkUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments/${encodeURIComponent(trxId)}/status`;
         const checkRes = await fetch(checkUrl, {
           method: "POST",
@@ -551,9 +557,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
         const apiStatus = rawStatus === "paid" ? "success" : rawStatus;
 
         let pPaidAt = providerTrx.paidAt || providerTrx.createdAt || null;
-        if (typeof pPaidAt === "number") {
-          pPaidAt = new Date(pPaidAt).toISOString();
-        }
+        if (pPaidAt) pPaidAt = new Date(pPaidAt).toISOString();
 
         if (apiStatus === "success") {
           const updateResult = await User.updateOne(
@@ -637,7 +641,6 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
     let dep = h.historyDeposit[0];
     let status = String(dep.status || "pending").toLowerCase();
 
-    // ================= STATUS TERMINAL =================
     if (!["pending", "processing"].includes(status)) {
       const nominal = Number(dep.nominal) || 0;
       const kodeUnik = Number(dep.kode_unik || dep.tambahan || dep.fee) || 0;
@@ -663,7 +666,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
           qr_image_combined: dep.qr_image || "",
           qr_image_raw: dep.qr_image_raw || "",
           qris_string: dep.qris_string || "",
-          bg_image: dep.bg_image || DEFAULT_BG_URL,
+          bg_image: dep.bg_image || (typeof DEFAULT_BG_URL !== 'undefined' ? DEFAULT_BG_URL : ''),
           created_at: dep.created_at || null,
           expires_at: dep.provider_expires_at || null,
           paid_at: dep.provider_time || null,
@@ -676,7 +679,6 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
       });
     }
 
-    // ================= LIVE CHECK VIA POST API v1 /status =================
     const targetPaymentId = dep.provider_id || id;
     const detailUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
 
@@ -689,7 +691,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0"
         },
-        body: JSON.stringify({}) // Sesuai curl -d '{}'
+        body: JSON.stringify({})
       });
     } catch (e) {
       console.error("XS-Pedia Status Fetch Error:", e);
@@ -716,14 +718,10 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
         const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
 
         let pPaidAt = providerTrx.paidAt || providerTrx.createdAt || null;
-        if (typeof pPaidAt === "number") {
-          pPaidAt = new Date(pPaidAt).toISOString();
-        }
+        if (pPaidAt) pPaidAt = new Date(pPaidAt).toISOString();
 
         let pExpiresAt = providerTrx.expiresAt || null;
-        if (typeof pExpiresAt === "number") {
-          pExpiresAt = new Date(pExpiresAt).toISOString();
-        }
+        if (pExpiresAt) pExpiresAt = new Date(pExpiresAt).toISOString();
 
         if (providerStatus === "success") {
           await User.updateOne(
@@ -772,7 +770,6 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
       }
     }
 
-    // ================= DATA TERBARU =================
     h = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -805,7 +802,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
         qr_image_combined: dep.qr_image || "",
         qr_image_raw: dep.qr_image_raw || "",
         qris_string: dep.qris_string || "",
-        bg_image: dep.bg_image || DEFAULT_BG_URL,
+        bg_image: dep.bg_image || (typeof DEFAULT_BG_URL !== 'undefined' ? DEFAULT_BG_URL : ''),
         created_at: dep.created_at || null,
         expires_at: dep.provider_expires_at || null,
         paid_at: dep.provider_time || null,

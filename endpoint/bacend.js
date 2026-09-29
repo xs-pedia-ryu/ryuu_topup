@@ -75,6 +75,7 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
   }
 });
 // ================= BUAT TRANSAKSI DEPOSIT =================
+// ================= BUAT TRANSAKSI DEPOSIT =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -151,6 +152,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const rawQrImage = paymentData.qr || "";
     const qrisString = paymentData.qrisString || "";
     const providerPaymentId = paymentData.paymentId || null;
+    const paymentToken = paymentData.paymentToken || "";
     
     // Parsing timestamp UNIX MS dari API XS-Pedia
     const rawCreatedAt = paymentData.createdAt;
@@ -158,15 +160,15 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
       : new Date().toISOString();
 
-    if (!rawQrImage || !qrisString) {
+    if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "XS-Pedia tidak mengembalikan QRIS lengkap."
+        message: "XS-Pedia tidak mengembalikan QRIS / paymentId lengkap."
       });
     }
 
-    // ================= ID TRANSAKSI =================
-    const localTrxId = `XIAO-WEB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    // ================= ID TRANSAKSI (Menggunakan paymentId dari Provider) =================
+    const localTrxId = providerPaymentId;
     const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
 
     // ================= SIMPAN HISTORY =================
@@ -184,6 +186,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       provider_amount: totalBayar,
       provider: "xs-pedia",
       provider_id: providerPaymentId,
+      payment_token: paymentToken, // Disimpan untuk request status nanti
       provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
       provider_status: paymentData.status || "pending",
@@ -279,7 +282,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
         if (!providerTrx) return;
 
-        const providerStatus = String(providerTrx.status || "").toLowerCase();
+        const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
+        const providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
 
         if (providerStatus === "success") {
           const updateResult = await User.updateOne(
@@ -343,7 +347,6 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     }, 10000);
 
-    // Otomatis menghentikan polling setelah 16 menit (mengikuti expired server 15 menit)
     setTimeout(() => clearInterval(intervalId), 16 * 60 * 1000);
 
   } catch (err) {
@@ -356,6 +359,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
   }
 });
+
 
 
 // ================= CEK STATUS DEPOSIT =================

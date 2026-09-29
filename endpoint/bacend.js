@@ -68,6 +68,7 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
 });
 
 // ================= BUAT TRANSAKSI DEPOSIT =================
+// ================= BUAT TRANSAKSI DEPOSIT =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -88,40 +89,28 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xs-pedia-payment.vercel.app";
-    const XS_TOKEN = process.env.XS_PEDIA_TOKEN;
-    const STATIC_QR = process.env.XS_PEDIA_STATIC_QR;
-
-    if (!XS_TOKEN) {
-      return res.status(500).json({
-        success: false,
-        message: "XS_PEDIA_TOKEN belum disetting di server."
-      });
-    }
-
-    if (!STATIC_QR) {
-      return res.status(500).json({
-        success: false,
-        message: "XS_PEDIA_STATIC_QR belum disetting di server."
-      });
-    }
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app"; //[span_5](start_span)[span_5](end_span)
 
     // ================= KODE UNIK =================
     const kodeUnik = Math.floor(Math.random() * 250) + 1; // Nilai Rp1 - Rp250
     const totalBayar = parsedNominal + kodeUnik;
     const saldoDiterima = parsedNominal;
 
-    // ================= CREATE XS-PEDIA =================
-    const createUrl = `${XS_BASE}/api/qris/create?amount=${encodeURIComponent(totalBayar)}&static_qr=${encodeURIComponent(STATIC_QR)}`;
+    // ================= CREATE XS-PEDIA (API v1) =================
+    const createUrl = `${XS_BASE}/api/v1/payments`; //[span_6](start_span)[span_6](end_span)
 
     let response;
     try {
       response = await fetch(createUrl, {
-        method: "GET",
+        method: "POST", //[span_7](start_span)[span_7](end_span)
         headers: {
-          Accept: "application/json",
+          "Content-Type": "application/json", //[span_8](start_span)[span_8](end_span)
+          "Accept": "application/json",
           "User-Agent": "Mozilla/5.0"
-        }
+        },
+        body: JSON.stringify({
+          amount: totalBayar //[span_9](start_span)[span_9](end_span)
+        })
       });
     } catch (fetchError) {
       console.error("XS-Pedia Create Fetch Error:", fetchError);
@@ -144,18 +133,21 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    if (!response.ok || !result?.success) {
+    if (!response.ok || !result?.success || !result?.data) { //[span_10](start_span)[span_10](end_span)
       return res.status(400).json({
         success: false,
         message: result?.message || "Gagal membuat QRIS XS-Pedia."
       });
     }
 
-    const rawQrImage = result.image_url || result.qr_image || "";
-    const qrisString = result.qr_string || result.qris_string || "";
-    const providerCreatedAt = result.created_at || new Date().toISOString();
+    // Mapping sesuai struktur response API v1
+    const paymentData = result.data; //[span_11](start_span)[span_11](end_span)
+    const rawQrImage = paymentData.qr || ""; //[span_12](start_span)[span_12](end_span)
+    const qrisString = paymentData.qrisString || ""; //[span_13](start_span)[span_13](end_span)
+    const providerPaymentId = paymentData.paymentId || null; //[span_14](start_span)[span_14](end_span)
+    const providerCreatedAt = paymentData.createdAt ? new Date(paymentData.createdAt).toISOString() : new Date().toISOString(); //[span_15](start_span)[span_15](end_span)
 
-    if (!rawQrImage || !qrisString) {
+    if (!rawQrImage || !qrisString) { //[span_16](start_span)[span_16](end_span)
       return res.status(502).json({
         success: false,
         message: "XS-Pedia tidak mengembalikan QRIS lengkap."
@@ -180,15 +172,15 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       get_balance: saldoDiterima,
       provider_amount: totalBayar,
       provider: "xs-pedia",
-      provider_id: null,
-      provider_reference_id: null,
+      provider_id: providerPaymentId, // Disimpan dari response paymentId[span_17](start_span)[span_17](end_span)
+      provider_reference_id: providerPaymentId, //[span_18](start_span)[span_18](end_span)
       provider_created_at: providerCreatedAt,
-      provider_status: "pending",
+      provider_status: paymentData.status || "pending", //[span_19](start_span)[span_19](end_span)
       provider_time: null,
-      qris_string: qrisString,
+      qris_string: qrisString, //[span_20](start_span)[span_20](end_span)
       metode: "QRIS",
       status: "pending",
-      qr_image: rawQrImage,
+      qr_image: rawQrImage, //[span_21](start_span)[span_21](end_span)
       bg_image: customBgUrl,
       created_at: new Date()
     };
@@ -233,6 +225,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           return;
         }
 
+        const XS_TOKEN = process.env.XS_PEDIA_TOKEN;
         const historyUrl = `${XS_BASE}/api/history?token=${encodeURIComponent(XS_TOKEN)}`;
         const checkRes = await fetch(historyUrl, {
           method: "GET",
@@ -351,6 +344,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
   }
 });
+
 
 // ================= CEK STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {

@@ -146,18 +146,22 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // Mapping sesuai struktur response API v1
+    // Mapping sesuai struktur response API v1 terbaru
     const paymentData = result.data;
     const rawQrImage = paymentData.qr || "";
     const qrisString = paymentData.qrisString || "";
-    const providerPaymentId = paymentData.paymentId || paymentData.id;
-    const paymentToken = paymentData.paymentToken || "";
+    const providerPaymentId = paymentData.paymentId;
     
-    // Parsing timestamp UNIX MS dari API XS-Pedia
+    // Parsing timestamp MS (epoch) dari response API
     const rawCreatedAt = paymentData.createdAt;
     const providerCreatedAt = rawCreatedAt 
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
       : new Date().toISOString();
+
+    const rawExpiresAt = paymentData.expiresAt;
+    const providerExpiresAt = rawExpiresAt
+      ? new Date(typeof rawExpiresAt === 'number' ? rawExpiresAt : rawExpiresAt).toISOString()
+      : null;
 
     if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
@@ -166,8 +170,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // ================= ID TRANSAKSI MURNI DARI API =================
-    const localTrxId = providerPaymentId; // Menggunakan ID dari response API (misal: "xiao-api-483921")
+    // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
+    const localTrxId = providerPaymentId; // e.g. "xiao-api-483921"
     const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
 
     // ================= SIMPAN HISTORY =================
@@ -182,12 +186,13 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       fee_provider: 0,
       total_amount: totalBayar,
       get_balance: saldoDiterima,
-      provider_amount: totalBayar,
+      provider_amount: paymentData.amount || totalBayar,
       provider: "xs-pedia",
       provider_id: providerPaymentId,
-      payment_token: paymentToken,
       provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
+      provider_expires_at: providerExpiresAt,
+      expires_in_ms: paymentData.expiresInMs || 900000,
       provider_status: paymentData.status || "pending",
       provider_time: null,
       qris_string: qrisString,
@@ -218,7 +223,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
         qr_image: rawQrImage,    
         qris_string: qrisString,    
         bg_image: customBgUrl,    
-        status: "pending"
+        status: paymentData.status || "pending",
+        expires_at: providerExpiresAt,
+        expires_in_ms: paymentData.expiresInMs || 900000
       }
     });
 
@@ -238,53 +245,33 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           return;
         }
 
-        const XS_TOKEN = process.env.XS_PEDIA_TOKEN;
-        const historyUrl = `${XS_BASE}/api/history?token=${encodeURIComponent(XS_TOKEN)}`;
-        const checkRes = await fetch(historyUrl, {
-          method: "GET",
-          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+        // Live status-check via POST ke /api/v1/payments/{paymentId}/status
+        const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localTrxId)}/status`;
+        const checkRes = await fetch(detailUrl, {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Accept": "application/json", 
+            "User-Agent": "Mozilla/5.0" 
+          },
+          body: JSON.stringify({})
         });
 
         if (!checkRes.ok) return;
 
         const checkData = await checkRes.json();
-        if (!checkData?.success || !Array.isArray(checkData.data)) return;
+        if (!checkData?.success || !checkData?.data) return;
 
-        let providerTrx = null;
-        if (latestDeposit.provider_id) {
-          providerTrx = checkData.data.find(x => String(x.id) === String(latestDeposit.provider_id));
-        }
-
-        if (!providerTrx) {
-          const targetAmount = Number(latestDeposit.provider_amount || latestDeposit.total_amount || 0);
-          const createdTime = new Date(latestDeposit.created_at).getTime();
-
-          const candidates = checkData.data
-            .filter(x => Number(x.amount) === targetAmount)
-            .filter(x => {
-              const xt = new Date(x.time).getTime();
-              return Number.isFinite(xt) && xt >= createdTime - 3 * 60 * 1000 && xt <= createdTime + 20 * 60 * 1000;
-            })
-            .sort((a, b) => new Date(a.time) - new Date(b.time));
-
-          for (const candidate of candidates) {
-            const alreadyUsed = await User.findOne({
-              "historyDeposit.provider_id": String(candidate.id)
-            }).select("_id");
-
-            if (!alreadyUsed) {
-              providerTrx = candidate;
-              break;
-            }
-          }
-        }
-
-        if (!providerTrx) return;
-
+        const providerTrx = checkData.data;
         const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
         const providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
 
         if (providerStatus === "success") {
+          let pTime = providerTrx.paidAt || providerTrx.createdAt || null;
+          if (typeof pTime === 'number') {
+            pTime = new Date(pTime).toISOString();
+          }
+
           const updateResult = await User.updateOne(
             {
               _id: user._id,
@@ -298,11 +285,11 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             {
               $set: {
                 "historyDeposit.$.status": "success",
-                "historyDeposit.$.provider_id": String(providerTrx.id),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.reference_id || providerTrx.id),
+                "historyDeposit.$.provider_id": String(providerTrx.id || localTrxId),
+                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionId || providerTrx.id || localTrxId),
                 "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
                 "historyDeposit.$.provider_status": providerStatus,
-                "historyDeposit.$.provider_time": providerTrx.time || null
+                "historyDeposit.$.provider_time": pTime
               },
               $inc: {
                 saldo: Number(latestDeposit.get_balance) || 0
@@ -311,7 +298,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           );
 
           if (updateResult.modifiedCount > 0) {
-            console.log(`Deposit SUCCESS ${localTrxId} provider=${providerTrx.id}`);
+            console.log(`Deposit SUCCESS ${localTrxId}`);
           }
           clearInterval(intervalId);
           return;
@@ -331,11 +318,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             {
               $set: {
                 "historyDeposit.$.status": providerStatus,
-                "historyDeposit.$.provider_id": String(providerTrx.id),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.reference_id || providerTrx.id),
-                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
-                "historyDeposit.$.provider_status": providerStatus,
-                "historyDeposit.$.provider_time": providerTrx.time || null
+                "historyDeposit.$.provider_status": providerStatus
               }
             }
           );
@@ -346,7 +329,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     }, 10000);
 
-    setTimeout(() => clearInterval(intervalId), 16 * 60 * 1000);
+    // Otomatis menghentikan polling sesuai durasi expired (default 15 menit)
+    const timeoutMs = paymentData.expiresInMs || 15 * 60 * 1000;
+    setTimeout(() => clearInterval(intervalId), timeoutMs + 60000);
 
   } catch (err) {
     console.error("Deposit Create Error:", err);
@@ -421,6 +406,8 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
           qris_string: localData.qris_string || "",
           created_at: localData.created_at || null,
+          expires_at: localData.provider_expires_at || null,
+          paid_at: localData.provider_time || null,
           provider_id: localData.provider_id || null,
           provider_reference_id: localData.provider_reference_id || null,
           provider_amount: Number(localData.provider_amount) || totalAmount,
@@ -448,7 +435,6 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     let providerTrx = null;
 
     // ================= CEK VIA POST /api/v1/payments/{paymentId}/status =================
-    // Menggunakan provider_id atau id transaksi sebagai paymentId dinamis
     const targetPaymentId = localData.provider_id || id;
 
     if (targetPaymentId) {
@@ -480,13 +466,18 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       // Mapping "paid" dari API ke status "success" internal
       let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
 
-      const pId = String(providerTrx.id || providerTrx.paymentId || targetPaymentId);
+      const pId = String(providerTrx.id || targetPaymentId);
       const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
       
-      // Parsing timestamp paidAt/createdAt (format epoch MS atau ISO String)
-      let pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;
-      if (typeof pTime === 'number') {
-        pTime = new Date(pTime).toISOString();
+      // Parsing timestamp MS (epoch) dari response API status
+      let pPaidAt = providerTrx.paidAt || providerTrx.createdAt || null;
+      if (typeof pPaidAt === 'number') {
+        pPaidAt = new Date(pPaidAt).toISOString();
+      }
+
+      let pExpiresAt = providerTrx.expiresAt || null;
+      if (typeof pExpiresAt === 'number') {
+        pExpiresAt = new Date(pExpiresAt).toISOString();
       }
 
       if (providerStatus === "success") {
@@ -507,7 +498,8 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.provider_reference_id": pRef,
               "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
               "historyDeposit.$.provider_status": providerStatus,
-              "historyDeposit.$.provider_time": pTime
+              "historyDeposit.$.provider_time": pPaidAt,
+              "historyDeposit.$.provider_expires_at": pExpiresAt
             },
             $inc: {
               saldo: Number(localData.get_balance) || 0
@@ -536,7 +528,8 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.provider_reference_id": pRef,
               "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
               "historyDeposit.$.provider_status": providerStatus,
-              "historyDeposit.$.provider_time": pTime
+              "historyDeposit.$.provider_time": pPaidAt,
+              "historyDeposit.$.provider_expires_at": pExpiresAt
             }
           }
         );
@@ -580,6 +573,8 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
         bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
         qris_string: localData.qris_string || "",
         created_at: localData.created_at || null,
+        expires_at: localData.provider_expires_at || null,
+        paid_at: localData.provider_time || null,
         provider_id: localData.provider_id || null,
         provider_reference_id: localData.provider_reference_id || null,
         provider_amount: Number(localData.provider_amount) || totalAmount,
@@ -596,8 +591,6 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
-
-
 
 // ================= CANCEL DEPOSIT (INTERNAL ONLY) =================
 router.post("/deposit/cancel", requireLogin, async (req, res) => {

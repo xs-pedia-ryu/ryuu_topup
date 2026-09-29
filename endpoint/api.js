@@ -291,7 +291,7 @@ router.get("/deposit/metode", validateApiKey, async (req, res) => {
   }
 });
 // ================= XS-PEDIA HELPER =================
-const XS_PEDIA_BASE_URL = process.env.XS_PEDIA_BASE_URL || "https://xs-pedia-payment.vercel.app";
+const XS_PEDIA_BASE_URL = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
 const XS_PEDIA_TOKEN = process.env.XS_PEDIA_TOKEN;
 const XS_PEDIA_STATIC_QR = process.env.XS_PEDIA_STATIC_QR;
 

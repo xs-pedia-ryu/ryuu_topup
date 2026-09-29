@@ -75,7 +75,6 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
   }
 });
 // ================= BUAT TRANSAKSI DEPOSIT =================
-// ================= BUAT TRANSAKSI DEPOSIT =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -143,7 +142,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     if (!response.ok || !result?.success || !result?.data) {
       return res.status(400).json({
         success: false,
-        message: result?.message || "Gagal membuat QRIS XS-Pedia."
+        message: result?.message || result?.error || "Gagal membuat QRIS XS-Pedia."
       });
     }
 
@@ -151,7 +150,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const paymentData = result.data;
     const rawQrImage = paymentData.qr || "";
     const qrisString = paymentData.qrisString || "";
-    const providerPaymentId = paymentData.paymentId || null;
+    
+    // Ambil paymentId atau id dari response API
+    const providerPaymentId = paymentData.paymentId || paymentData.id || null;
     const paymentToken = paymentData.paymentToken || "";
     
     // Parsing timestamp UNIX MS dari API XS-Pedia
@@ -160,15 +161,17 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
       : new Date().toISOString();
 
-    if (!rawQrImage || !qrisString || !providerPaymentId) {
+    if (!rawQrImage || !qrisString) {
       return res.status(502).json({
         success: false,
-        message: "XS-Pedia tidak mengembalikan QRIS / paymentId lengkap."
+        message: "XS-Pedia tidak mengembalikan QRIS lengkap."
       });
     }
 
-    // ================= ID TRANSAKSI (Menggunakan paymentId dari Provider) =================
-    const localTrxId = providerPaymentId;
+    // ================= ID TRANSAKSI =================
+    // Mengutamakan paymentId dari API, jika kosong baru pakai ID lokal
+    const generatedFallbackId = `XIAO-WEB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const localTrxId = providerPaymentId || generatedFallbackId;
     const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
 
     // ================= SIMPAN HISTORY =================
@@ -185,9 +188,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       get_balance: saldoDiterima,
       provider_amount: totalBayar,
       provider: "xs-pedia",
-      provider_id: providerPaymentId,
-      payment_token: paymentToken, // Disimpan untuk request status nanti
-      provider_reference_id: providerPaymentId,
+      provider_id: providerPaymentId || localTrxId,
+      payment_token: paymentToken,
+      provider_reference_id: providerPaymentId || localTrxId,
       provider_created_at: providerCreatedAt,
       provider_status: paymentData.status || "pending",
       provider_time: null,
@@ -359,6 +362,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
   }
 });
+
 
 
 

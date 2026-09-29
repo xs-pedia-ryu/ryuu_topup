@@ -150,9 +150,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const paymentData = result.data;
     const rawQrImage = paymentData.qr || "";
     const qrisString = paymentData.qrisString || "";
-    
-    // Ambil paymentId atau id dari response API
-    const providerPaymentId = paymentData.paymentId || paymentData.id || null;
+    const providerPaymentId = paymentData.paymentId || paymentData.id;
     const paymentToken = paymentData.paymentToken || "";
     
     // Parsing timestamp UNIX MS dari API XS-Pedia
@@ -161,17 +159,15 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
       : new Date().toISOString();
 
-    if (!rawQrImage || !qrisString) {
+    if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "XS-Pedia tidak mengembalikan QRIS lengkap."
+        message: "XS-Pedia tidak mengembalikan QRIS / paymentId lengkap."
       });
     }
 
-    // ================= ID TRANSAKSI =================
-    // Mengutamakan paymentId dari API, jika kosong baru pakai ID lokal
-    const generatedFallbackId = `XIAO-WEB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const localTrxId = providerPaymentId || generatedFallbackId;
+    // ================= ID TRANSAKSI MURNI DARI API =================
+    const localTrxId = providerPaymentId; // Menggunakan ID dari response API (misal: "xiao-api-483921")
     const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
 
     // ================= SIMPAN HISTORY =================
@@ -188,9 +184,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       get_balance: saldoDiterima,
       provider_amount: totalBayar,
       provider: "xs-pedia",
-      provider_id: providerPaymentId || localTrxId,
+      provider_id: providerPaymentId,
       payment_token: paymentToken,
-      provider_reference_id: providerPaymentId || localTrxId,
+      provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
       provider_status: paymentData.status || "pending",
       provider_time: null,
@@ -363,9 +359,6 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
   }
 });
 
-
-
-
 // ================= CEK STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
   try {
@@ -454,11 +447,13 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
 
     let providerTrx = null;
 
-    // ================= 1. CEK VIA POST /api/v1/payments/{paymentId}/status =================
-    if (localData.provider_id) {
-      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status`;
+    // ================= CEK VIA POST /api/v1/payments/{paymentId}/status =================
+    // Menggunakan provider_id atau id transaksi sebagai paymentId dinamis
+    const targetPaymentId = localData.provider_id || id;
+
+    if (targetPaymentId) {
+      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
       
-      // Mengirim POST request dengan body paymentToken sesuai dokumentasi
       const detailRes = await fetchWithTimeout(detailUrl, {
         method: "POST",
         headers: {
@@ -466,9 +461,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           "Accept": "application/json",
           "User-Agent": "Mozilla/5.0"
         },
-        body: JSON.stringify({
-          paymentToken: localData.payment_token || localData.provider_token || ""
-        })
+        body: JSON.stringify({}) // Sesuai dokumentasi curl -d '{}'
       });
 
       if (detailRes && detailRes.ok) {
@@ -481,77 +474,13 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       }
     }
 
-    // ================= 2. FALLBACK: CEK VIA HISTORY =================
-    if (!providerTrx) {
-      const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=50`;
-      const response = await fetchWithTimeout(historyUrl, {
-        method: "GET",
-        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-      });
-
-      if (response && response.ok) {
-        try {
-          const result = await response.json();
-          if (result?.success && Array.isArray(result.data)) {
-            const targetAmount =
-              Number(localData.provider_amount) ||
-              Number(localData.total_amount) ||
-              (Number(localData.nominal) || 0) + (Number(localData.kode_unik || localData.tambahan || localData.fee) || 0);
-
-            const createdTime = new Date(localData.created_at).getTime();
-
-            const candidates = result.data
-              .filter(x => Number(x.amount) === targetAmount)
-              .filter(x => {
-                const providerTime = new Date(x.createdAt || x.time).getTime();
-                if (!Number.isFinite(providerTime)) return false;
-                if (!Number.isFinite(createdTime)) return true;
-
-                return (
-                  providerTime >= createdTime - 3 * 60 * 1000 &&
-                  providerTime <= createdTime + 30 * 60 * 1000
-                );
-              })
-              .sort((a, b) => new Date(a.createdAt || a.time) - new Date(b.createdAt || b.time));
-
-            for (const candidate of candidates) {
-              const candidateId = candidate.id || candidate.paymentId;
-              const alreadyUsed = await User.findOne({
-                "historyDeposit.provider_id": String(candidateId)
-              }).select("_id");
-
-              if (!alreadyUsed) {
-                providerTrx = candidate;
-                break;
-              }
-
-              const sameDeposit = await User.findOne({
-                _id: user._id,
-                historyDeposit: {
-                  $elemMatch: {
-                    id,
-                    provider_id: String(candidateId)
-                  }
-                }
-              }).select("_id");
-
-              if (sameDeposit) {
-                providerTrx = candidate;
-                break;
-              }
-            }
-          }
-        } catch (e) {}
-      }
-    }
-
     // ================= PROSES STATUS PROVIDER =================
     if (providerTrx) {
       let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();
       // Mapping "paid" dari API ke status "success" internal
       let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
 
-      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id || "");
+      const pId = String(providerTrx.id || providerTrx.paymentId || targetPaymentId);
       const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
       
       // Parsing timestamp paidAt/createdAt (format epoch MS atau ISO String)
@@ -667,6 +596,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
+
 
 
 // ================= CANCEL DEPOSIT (INTERNAL ONLY) =================

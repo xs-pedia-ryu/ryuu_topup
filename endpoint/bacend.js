@@ -35,37 +35,44 @@ const cloudscraperHeaders = {
 };
 // ================= METODE DEPOSIT =================
 router.post("/deposit/metode", requireLogin, async (req, res) => {
-try {
-const fullUrl = ${req.protocol}://${req.get("host")};
-const role = req.session.role || "user";
+  try {
+    const fullUrl = `${req.protocol}://${req.get("host")}`;
+    const role = req.session.role || "user";
 
-// Fee persen untuk tampilan diambil dari .env (dikonversi ke string untuk frontend jika diperlukan)  
-let feePersen = role === "reseller"   
-  ? (process.env.FEE_PERCENT_RESELLER || "7.7")   
-  : (process.env.FEE_PERCENT_USER || "7.7");    
+    // Fee persen untuk tampilan
+    let feePersen =
+      role === "reseller"
+        ? (process.env.FEE_PERCENT_RESELLER || "7.7")
+        : (process.env.FEE_PERCENT_USER || "7.7");
 
-// MENGEMBALIKAN METODE PAYINAJA QRIS    
-const metodeFormatted = [{    
-  metode: "QRIS",    
-  type: "ewallet",    
-  name: "QRIS All Payment (Otomatis)",    
-  min: 10,    
-  max: 5000000,    
-  fee: 0,    
-  fee_persen: feePersen,    
-  status: "aktif",    
-  img_url: `${fullUrl}/media/metode/qrisfast.png`,    
-}];    
+    // Metode QRIS
+    const metodeFormatted = [
+      {
+        metode: "QRIS",
+        type: "ewallet",
+        name: "QRIS All Payment (Otomatis)",
+        min: 10,
+        max: 5000000,
+        fee: 0,
+        fee_persen: feePersen,
+        status: "aktif",
+        img_url: `${fullUrl}/media/metode/qrisfast.png`,
+      },
+    ];
 
-return res.status(200).json({    
-  success: true,    
-  message: "Daftar metode deposit Payinaja",    
-  metode: metodeFormatted,    
-});
+    return res.status(200).json({
+      success: true,
+      message: "Daftar metode deposit Payinaja",
+      metode: metodeFormatted,
+    });
+  } catch (error) {
+    console.error("Error deposit/metode:", error);
 
-} catch (error) {
-res.status(500).json({ success: false, message: "Gagal mengambil metode." });
-}
+    return res.status(500).json({
+      success: false,
+      message: "Gagal mengambil metode.",
+    });
+  }
 });
 router.post("/deposit/create", requireLogin, async (req, res) => {
 try {

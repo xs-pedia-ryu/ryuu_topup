@@ -75,7 +75,6 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
   }
 });
 // ================= BUAT TRANSAKSI DEPOSIT =================
-// ================= BUAT TRANSAKSI DEPOSIT =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -96,7 +95,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app"; //[span_5](start_span)[span_5](end_span)
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
 
     // ================= KODE UNIK =================
     const kodeUnik = Math.floor(Math.random() * 250) + 1; // Nilai Rp1 - Rp250
@@ -104,19 +103,19 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const saldoDiterima = parsedNominal;
 
     // ================= CREATE XS-PEDIA (API v1) =================
-    const createUrl = `${XS_BASE}/api/v1/payments`; //[span_6](start_span)[span_6](end_span)
+    const createUrl = `${XS_BASE}/api/v1/payments`;
 
     let response;
     try {
       response = await fetch(createUrl, {
-        method: "POST", //[span_7](start_span)[span_7](end_span)
+        method: "POST",
         headers: {
-          "Content-Type": "application/json", //[span_8](start_span)[span_8](end_span)
+          "Content-Type": "application/json",
           "Accept": "application/json",
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          amount: totalBayar //[span_9](start_span)[span_9](end_span)
+          amount: totalBayar
         })
       });
     } catch (fetchError) {
@@ -140,7 +139,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    if (!response.ok || !result?.success || !result?.data) { //[span_10](start_span)[span_10](end_span)
+    if (!response.ok || !result?.success || !result?.data) {
       return res.status(400).json({
         success: false,
         message: result?.message || "Gagal membuat QRIS XS-Pedia."
@@ -148,13 +147,18 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
 
     // Mapping sesuai struktur response API v1
-    const paymentData = result.data; //[span_11](start_span)[span_11](end_span)
-    const rawQrImage = paymentData.qr || ""; //[span_12](start_span)[span_12](end_span)
-    const qrisString = paymentData.qrisString || ""; //[span_13](start_span)[span_13](end_span)
-    const providerPaymentId = paymentData.paymentId || null; //[span_14](start_span)[span_14](end_span)
-    const providerCreatedAt = paymentData.createdAt ? new Date(paymentData.createdAt).toISOString() : new Date().toISOString(); //[span_15](start_span)[span_15](end_span)
+    const paymentData = result.data;
+    const rawQrImage = paymentData.qr || "";
+    const qrisString = paymentData.qrisString || "";
+    const providerPaymentId = paymentData.paymentId || null;
+    
+    // Parsing timestamp UNIX MS dari API XS-Pedia
+    const rawCreatedAt = paymentData.createdAt;
+    const providerCreatedAt = rawCreatedAt 
+      ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
+      : new Date().toISOString();
 
-    if (!rawQrImage || !qrisString) { //[span_16](start_span)[span_16](end_span)
+    if (!rawQrImage || !qrisString) {
       return res.status(502).json({
         success: false,
         message: "XS-Pedia tidak mengembalikan QRIS lengkap."
@@ -179,15 +183,15 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       get_balance: saldoDiterima,
       provider_amount: totalBayar,
       provider: "xs-pedia",
-      provider_id: providerPaymentId, // Disimpan dari response paymentId[span_17](start_span)[span_17](end_span)
-      provider_reference_id: providerPaymentId, //[span_18](start_span)[span_18](end_span)
+      provider_id: providerPaymentId,
+      provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
-      provider_status: paymentData.status || "pending", //[span_19](start_span)[span_19](end_span)
+      provider_status: paymentData.status || "pending",
       provider_time: null,
-      qris_string: qrisString, //[span_20](start_span)[span_20](end_span)
+      qris_string: qrisString,
       metode: "QRIS",
       status: "pending",
-      qr_image: rawQrImage, //[span_21](start_span)[span_21](end_span)
+      qr_image: rawQrImage,
       bg_image: customBgUrl,
       created_at: new Date()
     };
@@ -257,7 +261,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             .filter(x => Number(x.amount) === targetAmount)
             .filter(x => {
               const xt = new Date(x.time).getTime();
-              return Number.isFinite(xt) && xt >= createdTime - 3 * 60 * 1000 && xt <= createdTime + 30 * 60 * 1000;
+              return Number.isFinite(xt) && xt >= createdTime - 3 * 60 * 1000 && xt <= createdTime + 20 * 60 * 1000;
             })
             .sort((a, b) => new Date(a.time) - new Date(b.time));
 
@@ -339,7 +343,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     }, 10000);
 
-    setTimeout(() => clearInterval(intervalId), 30 * 60 * 1000);
+    // Otomatis menghentikan polling setelah 16 menit (mengikuti expired server 15 menit)
+    setTimeout(() => clearInterval(intervalId), 16 * 60 * 1000);
 
   } catch (err) {
     console.error("Deposit Create Error:", err);
@@ -424,9 +429,8 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
 
-    // Helper fetch dengan timeout otomatis 5 detik agar server tidak hang / crash[span_6](start_span)[span_6](end_span)
     const fetchWithTimeout = async (url, options = {}, timeout = 5000) => {
       const controller = new AbortController();
       const idTimeout = setTimeout(() => controller.abort(), timeout);
@@ -442,12 +446,21 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
 
     let providerTrx = null;
 
-    // 1. Cek via Payment ID
+    // ================= 1. CEK VIA POST /api/v1/payments/{paymentId}/status =================
     if (localData.provider_id) {
-      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status?refresh=1`;[span_7](start_span)[span_7](end_span)
+      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status`;
+      
+      // Mengirim POST request dengan body paymentToken sesuai dokumentasi
       const detailRes = await fetchWithTimeout(detailUrl, {
-        method: "GET",[span_8](start_span)[span_8](end_span)
-        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0"
+        },
+        body: JSON.stringify({
+          paymentToken: localData.payment_token || localData.provider_token || ""
+        })
       });
 
       if (detailRes && detailRes.ok) {
@@ -460,18 +473,18 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       }
     }
 
-    // 2. Fallback: Cek via History
+    // ================= 2. FALLBACK: CEK VIA HISTORY =================
     if (!providerTrx) {
-      const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=50`;[span_9](start_span)[span_9](end_span)
+      const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=50`;
       const response = await fetchWithTimeout(historyUrl, {
-        method: "GET",[span_10](start_span)[span_10](end_span)
+        method: "GET",
         headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
       });
 
       if (response && response.ok) {
         try {
           const result = await response.json();
-          if (result?.success && Array.isArray(result.data)) {[span_11](start_span)[span_11](end_span)
+          if (result?.success && Array.isArray(result.data)) {
             const targetAmount =
               Number(localData.provider_amount) ||
               Number(localData.total_amount) ||
@@ -480,9 +493,9 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
             const createdTime = new Date(localData.created_at).getTime();
 
             const candidates = result.data
-              .filter(x => Number(x.amount) === targetAmount)[span_12](start_span)[span_12](end_span)
+              .filter(x => Number(x.amount) === targetAmount)
               .filter(x => {
-                const providerTime = new Date(x.createdAt || x.time).getTime();[span_13](start_span)[span_13](end_span)
+                const providerTime = new Date(x.createdAt || x.time).getTime();
                 if (!Number.isFinite(providerTime)) return false;
                 if (!Number.isFinite(createdTime)) return true;
 
@@ -494,7 +507,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               .sort((a, b) => new Date(a.createdAt || a.time) - new Date(b.createdAt || b.time));
 
             for (const candidate of candidates) {
-              const candidateId = candidate.id || candidate.paymentId;[span_14](start_span)[span_14](end_span)
+              const candidateId = candidate.id || candidate.paymentId;
               const alreadyUsed = await User.findOne({
                 "historyDeposit.provider_id": String(candidateId)
               }).select("_id");
@@ -526,12 +539,18 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
 
     // ================= PROSES STATUS PROVIDER =================
     if (providerTrx) {
-      let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();[span_15](start_span)[span_15](end_span)
-      let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;[span_16](start_span)[span_16](end_span)
+      let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();
+      // Mapping "paid" dari API ke status "success" internal
+      let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
 
-      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id || "");[span_17](start_span)[span_17](end_span)
-      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);[span_18](start_span)[span_18](end_span)
-      const pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;[span_19](start_span)[span_19](end_span)
+      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id || "");
+      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
+      
+      // Parsing timestamp paidAt/createdAt (format epoch MS atau ISO String)
+      let pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;
+      if (typeof pTime === 'number') {
+        pTime = new Date(pTime).toISOString();
+      }
 
       if (providerStatus === "success") {
         const updateResult = await User.updateOne(
@@ -549,7 +568,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.status": "success",
               "historyDeposit.$.provider_id": pId,
               "historyDeposit.$.provider_reference_id": pRef,
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_20](start_span)[span_20](end_span)
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
               "historyDeposit.$.provider_status": providerStatus,
               "historyDeposit.$.provider_time": pTime
             },
@@ -578,7 +597,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.status": providerStatus,
               "historyDeposit.$.provider_id": pId,
               "historyDeposit.$.provider_reference_id": pRef,
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_21](start_span)[span_21](end_span)
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
               "historyDeposit.$.provider_status": providerStatus,
               "historyDeposit.$.provider_time": pTime
             }
@@ -640,7 +659,6 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
-
 
 
 // ================= CANCEL DEPOSIT (INTERNAL ONLY) =================

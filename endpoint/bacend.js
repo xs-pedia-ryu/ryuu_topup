@@ -354,6 +354,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
 
 // ================= CEK STATUS DEPOSIT =================
+// ================= CEK STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
   const user = await User.findById(req.session.userId);
 
@@ -389,7 +390,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     let localData = userWithHistory.historyDeposit[0];
     let localStatus = String(localData.status || "pending").toLowerCase();
 
-    // ================= STATUS TERMINAL =================
+    // ================= STATUS TERMINAL (JIKA SUDAH SELESAI/BATAL) =================
     if (!["pending", "processing"].includes(localStatus)) {
       const nominal = Number(localData.nominal) || 0;
       const kodeUnik = Number(localData.kode_unik || localData.tambahan || localData.fee) || 0;
@@ -424,117 +425,110 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xs-pedia-payment.vercel.app";
-    const XS_TOKEN = process.env.XS_PEDIA_TOKEN;
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)
 
-    if (!XS_TOKEN) {
-      return res.status(500).json({
-        success: false,
-        message: "XS_PEDIA_TOKEN belum disetting di server."
-      });
-    }
-
-    // ================= HISTORY XS-PEDIA =================
-    const historyUrl = `${XS_BASE}/api/history?token=${encodeURIComponent(XS_TOKEN)}`;
-
-    const response = await fetch(historyUrl, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0"
-      }
-    });
-
-    if (!response.ok) {
-      return res.status(502).json({
-        success: false,
-        message: "Gagal mengambil status dari XS-Pedia."
-      });
-    }
-
-    const responseText = await response.text();
-    let result;
-
-    try {
-      result = JSON.parse(responseText);
-    } catch (jsonError) {
-      console.error("XS-Pedia Status Invalid JSON:", responseText.slice(0, 500));
-      return res.status(502).json({
-        success: false,
-        message: "Response history XS-Pedia bukan JSON."
-      });
-    }
-
-    if (!result?.success || !Array.isArray(result.data)) {
-      return res.status(502).json({
-        success: false,
-        message: "Data history XS-Pedia tidak valid."
-      });
-    }
-
-    // ================= CARI TRANSAKSI =================
+    // ================= AMBIL STATUS / HISTORY DARI API V1 =================
     let providerTrx = null;
 
+    // 1. Coba fetch berdasarkan spesifik paymentId jika provider_id ada
     if (localData.provider_id) {
-      providerTrx = result.data.find(x => String(x.id) === String(localData.provider_id));
-    }
+      try {
+        const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status?refresh=1`;[span_4](start_span)[span_4](end_span)
+        const detailRes = await fetch(detailUrl, {
+          method: "GET",[span_5](start_span)[span_5](end_span)
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+        });
 
-    if (!providerTrx && localData.provider_reference_id) {
-      providerTrx = result.data.find(x => String(x.reference_id) === String(localData.provider_reference_id));
-    }
-
-    if (!providerTrx) {
-      const targetAmount =
-        Number(localData.provider_amount) ||
-        Number(localData.total_amount) ||
-        (Number(localData.nominal) || 0) + (Number(localData.kode_unik || localData.tambahan || localData.fee) || 0);
-
-      const createdTime = new Date(localData.created_at).getTime();
-
-      const candidates = result.data
-        .filter(x => Number(x.amount) === targetAmount)
-        .filter(x => {
-          const providerTime = new Date(x.time).getTime();
-          if (!Number.isFinite(providerTime)) return false;    
-          if (!Number.isFinite(createdTime)) return true;    
-
-          return (    
-            providerTime >= createdTime - 3 * 60 * 1000 &&    
-            providerTime <= createdTime + 30 * 60 * 1000    
-          );    
-        })    
-        .sort((a, b) => new Date(a.time) - new Date(b.time));
-
-      for (const candidate of candidates) {
-        const alreadyUsed = await User.findOne({
-          "historyDeposit.provider_id": String(candidate.id)
-        }).select("_id");
-
-        if (!alreadyUsed) {    
-          providerTrx = candidate;    
-          break;    
-        }    
-
-        const sameDeposit = await User.findOne({    
-          _id: user._id,    
-          historyDeposit: {    
-            $elemMatch: {    
-              id,    
-              provider_id: String(candidate.id)    
-            }    
-          }    
-        }).select("_id");    
-
-        if (sameDeposit) {    
-          providerTrx = candidate;    
-          break;    
+        if (detailRes.ok) {
+          const detailData = await detailRes.json();
+          if (detailData?.success && detailData?.data) {
+            providerTrx = detailData.data;
+          }
         }
+      } catch (e) {
+        console.error("XS-Pedia Status Fetch Error:", e.message);
       }
     }
 
-    // ================= PROSES STATUS =================
+    // 2. Fallback: Cari di API History (/api/v1/payments/history)
+    if (!providerTrx) {
+      try {
+        const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=100`;[span_6](start_span)[span_6](end_span)
+        const response = await fetch(historyUrl, {
+          method: "GET",[span_7](start_span)[span_7](end_span)
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result?.success && Array.isArray(result.data)) {[span_8](start_span)[span_8](end_span)
+            const targetAmount =
+              Number(localData.provider_amount) ||
+              Number(localData.total_amount) ||
+              (Number(localData.nominal) || 0) + (Number(localData.kode_unik || localData.tambahan || localData.fee) || 0);
+
+            const createdTime = new Date(localData.created_at).getTime();
+
+            const candidates = result.data
+              .filter(x => Number(x.amount) === targetAmount)[span_9](start_span)[span_9](end_span)
+              .filter(x => {
+                const providerTime = new Date(x.createdAt || x.time).getTime();[span_10](start_span)[span_10](end_span)
+                if (!Number.isFinite(providerTime)) return false;    
+                if (!Number.isFinite(createdTime)) return true;    
+
+                return (    
+                  providerTime >= createdTime - 3 * 60 * 1000 &&    
+                  providerTime <= createdTime + 30 * 60 * 1000    
+                );    
+              })    
+              .sort((a, b) => new Date(a.createdAt || a.time) - new Date(b.createdAt || b.time));
+
+            for (const candidate of candidates) {
+              const candidateId = candidate.id || candidate.paymentId;[span_11](start_span)[span_11](end_span)
+              const alreadyUsed = await User.findOne({
+                "historyDeposit.provider_id": String(candidateId)
+              }).select("_id");
+
+              if (!alreadyUsed) {    
+                providerTrx = candidate;    
+                break;    
+              }    
+
+              const sameDeposit = await User.findOne({    
+                _id: user._id,    
+                historyDeposit: {    
+                  $elemMatch: {    
+                    id,    
+                    provider_id: String(candidateId)    
+                  }    
+                }    
+              }).select("_id");    
+
+              if (sameDeposit) {    
+                providerTrx = candidate;    
+                break;    
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("XS-Pedia History Fetch Error:", e.message);
+      }
+    }
+
+    // ================= PROSES UPDATE STATUS DARI PROVIDER =================
     if (providerTrx) {
-      const providerStatus = String(providerTrx.status || localStatus).toLowerCase();
+      // Normalisasi status dari provider (misal: "paid" pada API v1 dianggap "success")
+      let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();[span_12](start_span)[span_12](end_span)
+      let providerStatus = rawProviderStatus;
+
+      if (rawProviderStatus === "paid") {[span_13](start_span)[span_13](end_span)
+        providerStatus = "success";
+      }
+
+      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id);[span_14](start_span)[span_14](end_span)
+      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);[span_15](start_span)[span_15](end_span)
+      const pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;[span_16](start_span)[span_16](end_span)
 
       // ================= SUCCESS =================
       if (providerStatus === "success") {
@@ -551,11 +545,11 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           {
             $set: {
               "historyDeposit.$.status": "success",
-              "historyDeposit.$.provider_id": String(providerTrx.id),
-              "historyDeposit.$.provider_reference_id": String(providerTrx.reference_id || providerTrx.id),
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
+              "historyDeposit.$.provider_id": pId,
+              "historyDeposit.$.provider_reference_id": pRef,
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_17](start_span)[span_17](end_span)
               "historyDeposit.$.provider_status": providerStatus,
-              "historyDeposit.$.provider_time": providerTrx.time || null
+              "historyDeposit.$.provider_time": pTime
             },
             $inc: {
               saldo: Number(localData.get_balance) || 0
@@ -583,11 +577,11 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           {
             $set: {
               "historyDeposit.$.status": providerStatus,
-              "historyDeposit.$.provider_id": String(providerTrx.id),
-              "historyDeposit.$.provider_reference_id": String(providerTrx.reference_id || providerTrx.id),
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
+              "historyDeposit.$.provider_id": pId,
+              "historyDeposit.$.provider_reference_id": pRef,
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_18](start_span)[span_18](end_span)
               "historyDeposit.$.provider_status": providerStatus,
-              "historyDeposit.$.provider_time": providerTrx.time || null
+              "historyDeposit.$.provider_time": pTime
             }
           }
         );
@@ -598,7 +592,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       }
     }
 
-    // ================= AMBIL DATA TERBARU =================
+    // ================= AMBIL DATA TERBARU DARI DB =================
     const refreshedUser = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -647,6 +641,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
+
 
 // ================= CANCEL DEPOSIT (INTERNAL ONLY) =================
 router.post("/deposit/cancel", requireLogin, async (req, res) => {

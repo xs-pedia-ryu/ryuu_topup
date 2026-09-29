@@ -354,27 +354,26 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
 
 // ================= CEK STATUS DEPOSIT =================
-// ================= CEK STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
-  const user = await User.findById(req.session.userId);
-
-  if (!user) {
-    return res.status(401).json({
-      success: false,
-      message: "Sesi tidak valid."
-    });
-  }
-
-  const { id } = req.body;
-
-  if (!id) {
-    return res.status(400).json({
-      success: false,
-      message: "ID diperlukan."
-    });
-  }
-
   try {
+    const user = await User.findById(req.session.userId);
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Sesi tidak valid."
+      });
+    }
+
+    const { id } = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "ID diperlukan."
+      });
+    }
+
     let userWithHistory = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -390,7 +389,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     let localData = userWithHistory.historyDeposit[0];
     let localStatus = String(localData.status || "pending").toLowerCase();
 
-    // ================= STATUS TERMINAL (JIKA SUDAH SELESAI/BATAL) =================
+    // ================= STATUS TERMINAL =================
     if (!["pending", "processing"].includes(localStatus)) {
       const nominal = Number(localData.nominal) || 0;
       const kodeUnik = Number(localData.kode_unik || localData.tambahan || localData.fee) || 0;
@@ -405,63 +404,74 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           nominal,
           kode_unik: kodeUnik,
           tambahan: kodeUnik,
-          fee: kodeUnik,    
-          fee_env: kodeUnik,    
-          fee_provider: 0,    
-          total_amount: totalAmount,    
-          get_balance: Number(localData.get_balance) || nominal,    
-          status: localStatus,    
-          metode: localData.metode || "QRIS",    
-          qr_image: localData.qr_image || null,    
-          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",    
-          qris_string: localData.qris_string || "",    
-          created_at: localData.created_at || null,    
-          provider_id: localData.provider_id || null,    
-          provider_reference_id: localData.provider_reference_id || null,    
-          provider_amount: Number(localData.provider_amount) || totalAmount,    
-          provider_status: localData.provider_status || null,    
-          provider_time: localData.provider_time || null    
+          fee: kodeUnik,
+          fee_env: kodeUnik,
+          fee_provider: 0,
+          total_amount: totalAmount,
+          get_balance: Number(localData.get_balance) || nominal,
+          status: localStatus,
+          metode: localData.metode || "QRIS",
+          qr_image: localData.qr_image || null,
+          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+          qris_string: localData.qris_string || "",
+          created_at: localData.created_at || null,
+          provider_id: localData.provider_id || null,
+          provider_reference_id: localData.provider_reference_id || null,
+          provider_amount: Number(localData.provider_amount) || totalAmount,
+          provider_status: localData.provider_status || null,
+          provider_time: localData.provider_time || null
         }
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";[span_2](start_span)[span_2](end_span)[span_3](start_span)[span_3](end_span)
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
 
-    // ================= AMBIL STATUS / HISTORY DARI API V1 =================
+    // Helper fetch dengan timeout otomatis 5 detik agar server tidak hang / crash[span_6](start_span)[span_6](end_span)
+    const fetchWithTimeout = async (url, options = {}, timeout = 5000) => {
+      const controller = new AbortController();
+      const idTimeout = setTimeout(() => controller.abort(), timeout);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(idTimeout);
+        return response;
+      } catch (err) {
+        clearTimeout(idTimeout);
+        return null;
+      }
+    };
+
     let providerTrx = null;
 
-    // 1. Coba fetch berdasarkan spesifik paymentId jika provider_id ada
+    // 1. Cek via Payment ID
     if (localData.provider_id) {
-      try {
-        const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status?refresh=1`;[span_4](start_span)[span_4](end_span)
-        const detailRes = await fetch(detailUrl, {
-          method: "GET",[span_5](start_span)[span_5](end_span)
-          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-        });
+      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localData.provider_id)}/status?refresh=1`;[span_7](start_span)[span_7](end_span)
+      const detailRes = await fetchWithTimeout(detailUrl, {
+        method: "GET",[span_8](start_span)[span_8](end_span)
+        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+      });
 
-        if (detailRes.ok) {
+      if (detailRes && detailRes.ok) {
+        try {
           const detailData = await detailRes.json();
           if (detailData?.success && detailData?.data) {
             providerTrx = detailData.data;
           }
-        }
-      } catch (e) {
-        console.error("XS-Pedia Status Fetch Error:", e.message);
+        } catch (e) {}
       }
     }
 
-    // 2. Fallback: Cari di API History (/api/v1/payments/history)
+    // 2. Fallback: Cek via History
     if (!providerTrx) {
-      try {
-        const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=100`;[span_6](start_span)[span_6](end_span)
-        const response = await fetch(historyUrl, {
-          method: "GET",[span_7](start_span)[span_7](end_span)
-          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
-        });
+      const historyUrl = `${XS_BASE}/api/v1/payments/history?limit=50`;[span_9](start_span)[span_9](end_span)
+      const response = await fetchWithTimeout(historyUrl, {
+        method: "GET",[span_10](start_span)[span_10](end_span)
+        headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }
+      });
 
-        if (response.ok) {
+      if (response && response.ok) {
+        try {
           const result = await response.json();
-          if (result?.success && Array.isArray(result.data)) {[span_8](start_span)[span_8](end_span)
+          if (result?.success && Array.isArray(result.data)) {[span_11](start_span)[span_11](end_span)
             const targetAmount =
               Number(localData.provider_amount) ||
               Number(localData.total_amount) ||
@@ -470,67 +480,59 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
             const createdTime = new Date(localData.created_at).getTime();
 
             const candidates = result.data
-              .filter(x => Number(x.amount) === targetAmount)[span_9](start_span)[span_9](end_span)
+              .filter(x => Number(x.amount) === targetAmount)[span_12](start_span)[span_12](end_span)
               .filter(x => {
-                const providerTime = new Date(x.createdAt || x.time).getTime();[span_10](start_span)[span_10](end_span)
-                if (!Number.isFinite(providerTime)) return false;    
-                if (!Number.isFinite(createdTime)) return true;    
+                const providerTime = new Date(x.createdAt || x.time).getTime();[span_13](start_span)[span_13](end_span)
+                if (!Number.isFinite(providerTime)) return false;
+                if (!Number.isFinite(createdTime)) return true;
 
-                return (    
-                  providerTime >= createdTime - 3 * 60 * 1000 &&    
-                  providerTime <= createdTime + 30 * 60 * 1000    
-                );    
-              })    
+                return (
+                  providerTime >= createdTime - 3 * 60 * 1000 &&
+                  providerTime <= createdTime + 30 * 60 * 1000
+                );
+              })
               .sort((a, b) => new Date(a.createdAt || a.time) - new Date(b.createdAt || b.time));
 
             for (const candidate of candidates) {
-              const candidateId = candidate.id || candidate.paymentId;[span_11](start_span)[span_11](end_span)
+              const candidateId = candidate.id || candidate.paymentId;[span_14](start_span)[span_14](end_span)
               const alreadyUsed = await User.findOne({
                 "historyDeposit.provider_id": String(candidateId)
               }).select("_id");
 
-              if (!alreadyUsed) {    
-                providerTrx = candidate;    
-                break;    
-              }    
+              if (!alreadyUsed) {
+                providerTrx = candidate;
+                break;
+              }
 
-              const sameDeposit = await User.findOne({    
-                _id: user._id,    
-                historyDeposit: {    
-                  $elemMatch: {    
-                    id,    
-                    provider_id: String(candidateId)    
-                  }    
-                }    
-              }).select("_id");    
+              const sameDeposit = await User.findOne({
+                _id: user._id,
+                historyDeposit: {
+                  $elemMatch: {
+                    id,
+                    provider_id: String(candidateId)
+                  }
+                }
+              }).select("_id");
 
-              if (sameDeposit) {    
-                providerTrx = candidate;    
-                break;    
+              if (sameDeposit) {
+                providerTrx = candidate;
+                break;
               }
             }
           }
-        }
-      } catch (e) {
-        console.error("XS-Pedia History Fetch Error:", e.message);
+        } catch (e) {}
       }
     }
 
-    // ================= PROSES UPDATE STATUS DARI PROVIDER =================
+    // ================= PROSES STATUS PROVIDER =================
     if (providerTrx) {
-      // Normalisasi status dari provider (misal: "paid" pada API v1 dianggap "success")
-      let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();[span_12](start_span)[span_12](end_span)
-      let providerStatus = rawProviderStatus;
+      let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();[span_15](start_span)[span_15](end_span)
+      let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;[span_16](start_span)[span_16](end_span)
 
-      if (rawProviderStatus === "paid") {[span_13](start_span)[span_13](end_span)
-        providerStatus = "success";
-      }
+      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id || "");[span_17](start_span)[span_17](end_span)
+      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);[span_18](start_span)[span_18](end_span)
+      const pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;[span_19](start_span)[span_19](end_span)
 
-      const pId = String(providerTrx.id || providerTrx.paymentId || localData.provider_id);[span_14](start_span)[span_14](end_span)
-      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);[span_15](start_span)[span_15](end_span)
-      const pTime = providerTrx.paidAt || providerTrx.createdAt || providerTrx.time || null;[span_16](start_span)[span_16](end_span)
-
-      // ================= SUCCESS =================
       if (providerStatus === "success") {
         const updateResult = await User.updateOne(
           {
@@ -547,7 +549,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.status": "success",
               "historyDeposit.$.provider_id": pId,
               "historyDeposit.$.provider_reference_id": pRef,
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_17](start_span)[span_17](end_span)
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_20](start_span)[span_20](end_span)
               "historyDeposit.$.provider_status": providerStatus,
               "historyDeposit.$.provider_time": pTime
             },
@@ -557,13 +559,10 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           }
         );
 
-        if (updateResult.modifiedCount > 0) {    
-          localStatus = "success";    
+        if (updateResult.modifiedCount > 0) {
+          localStatus = "success";
         }
-      }
-
-      // ================= FAILED / EXPIRED / CANCEL =================
-      else if (["failed", "expired", "cancel", "cancelled"].includes(providerStatus)) {
+      } else if (["failed", "expired", "cancel", "cancelled"].includes(providerStatus)) {
         const updateResult = await User.updateOne(
           {
             _id: user._id,
@@ -579,20 +578,20 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
               "historyDeposit.$.status": providerStatus,
               "historyDeposit.$.provider_id": pId,
               "historyDeposit.$.provider_reference_id": pRef,
-              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_18](start_span)[span_18](end_span)
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,[span_21](start_span)[span_21](end_span)
               "historyDeposit.$.provider_status": providerStatus,
               "historyDeposit.$.provider_time": pTime
             }
           }
         );
 
-        if (updateResult.modifiedCount > 0) {    
-          localStatus = providerStatus;    
+        if (updateResult.modifiedCount > 0) {
+          localStatus = providerStatus;
         }
       }
     }
 
-    // ================= AMBIL DATA TERBARU DARI DB =================
+    // ================= AMBIL DATA TERBARU =================
     const refreshedUser = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -611,24 +610,24 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
         id,
         trx_id: id,
         reff_id: localData.reff_id || localData.provider_reference_id || "-",
-        nominal,    
-        kode_unik: kodeUnik,    
-        tambahan: kodeUnik,    
-        fee: kodeUnik,    
-        fee_env: kodeUnik,    
-        fee_provider: 0,    
-        total_amount: totalAmount,    
-        get_balance: Number(localData.get_balance) || nominal,    
-        status: localStatus,    
-        metode: localData.metode || "QRIS",    
-        qr_image: localData.qr_image || null,    
-        bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",    
-        qris_string: localData.qris_string || "",    
-        created_at: localData.created_at || null,    
-        provider_id: localData.provider_id || null,    
-        provider_reference_id: localData.provider_reference_id || null,    
-        provider_amount: Number(localData.provider_amount) || totalAmount,    
-        provider_status: localData.provider_status || null,    
+        nominal,
+        kode_unik: kodeUnik,
+        tambahan: kodeUnik,
+        fee: kodeUnik,
+        fee_env: kodeUnik,
+        fee_provider: 0,
+        total_amount: totalAmount,
+        get_balance: Number(localData.get_balance) || nominal,
+        status: localStatus,
+        metode: localData.metode || "QRIS",
+        qr_image: localData.qr_image || null,
+        bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+        qris_string: localData.qris_string || "",
+        created_at: localData.created_at || null,
+        provider_id: localData.provider_id || null,
+        provider_reference_id: localData.provider_reference_id || null,
+        provider_amount: Number(localData.provider_amount) || totalAmount,
+        provider_status: localData.provider_status || null,
         provider_time: localData.provider_time || null
       }
     });
@@ -641,6 +640,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
+
 
 
 // ================= CANCEL DEPOSIT (INTERNAL ONLY) =================

@@ -123,777 +123,469 @@ router.get('/send', verifyApiKey, async (req, res) => {
         }
       }
     });
-// ================= CREATE DEPOSIT =================
-// ================= CREATE DEPOSIT =================
+ // ================= CREATE DEPOSIT =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
     const { nominal } = req.body;
     const parsedNominal = parseInt(nominal, 10);
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Sesi tidak valid."
-      });
-    }
+    if (!user) {  
+      return res.status(401).json({  
+        success: false,  
+        message: "Sesi tidak valid."  
+      });  
+    }  
 
-    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 10) {
-      return res.status(400).json({
-        success: false,
-        message: "Minimal deposit Rp10"
-      });
-    }
+    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 10) {  
+      return res.status(400).json({  
+        success: false,  
+        message: "Minimal deposit Rp10"  
+      });  
+    }  
 
-    const XS_BASE = (
-      process.env.XS_PEDIA_BASE_URL ||
-      "https://xspedia-payment.vercel.app"
-    ).replace(/\/+$/, "");
+    // Menggunakan base URL baru dari dokumentasi
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";  
 
-    const XS_API_KEY = process.env.XS_PEDIA_API_KEY;
+    // ================= KODE UNIK =================  
+    // Nilai hanya Rp1 - Rp250  
+    const kodeUnik = Math.floor(Math.random() * 250) + 1;  
 
-    if (!XS_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        message: "XS_PEDIA_API_KEY belum disetting di server."
-      });
-    }
+    // Total pembayaran  
+    const totalBayar = parsedNominal + kodeUnik;  
 
-    // ================= KODE UNIK =================
-    const kodeUnik = Math.floor(Math.random() * 250) + 1;
+    // Saldo yang diterima tetap nominal asli  
+    const saldoDiterima = parsedNominal;  
 
-    // Total yang harus dibayar
-    const totalBayar = parsedNominal + kodeUnik;
+    // ================= CREATE XS-PEDIA (POST /api/v1/payments) =================  
+    const createUrl = `${XS_BASE}/api/v1/payments`;  
 
-    // Saldo yang masuk tetap nominal asli
-    const saldoDiterima = parsedNominal;
+    let response;  
 
-    // ================= CREATE XS-PEDIA =================
-    const createUrl = `${XS_BASE}/api/v1/payments`;
-
-    let response;
-
-    try {
-      response = await fetch(createUrl, {
-        method: "POST",
-        headers: {
-          "x-api-key": XS_API_KEY,
+    try {  
+      response = await fetch(createUrl, {  
+        method: "POST",  
+        headers: {  
           "Content-Type": "application/json",
-          "Accept": "application/json"
+          "Accept": "application/json",  
+          "User-Agent": "Mozilla/5.0"  
         },
-        body: JSON.stringify({
-          amount: totalBayar
-        })
-      });
-    } catch (fetchError) {
-      console.error("XS-Pedia Create Fetch Error:", fetchError);
+        body: JSON.stringify({ amount: totalBayar })
+      });  
+    } catch (fetchError) {  
+      console.error("XS-Pedia Create Fetch Error:", fetchError);  
+      return res.status(502).json({  
+        success: false,  
+        message: "Koneksi server ke XS-Pedia gagal."  
+      });  
+    }  
 
-      return res.status(502).json({
-        success: false,
-        message: "Koneksi server ke XS-Pedia gagal."
-      });
-    }
+    const responseText = await response.text();  
 
-    const responseText = await response.text();
+    let result;  
 
-    let result;
+    try {  
+      result = JSON.parse(responseText);  
+    } catch (jsonError) {  
+      console.error("XS-Pedia Create Invalid Response:", responseText.slice(0, 500));  
+      return res.status(502).json({  
+        success: false,  
+        message: "XS-Pedia mengembalikan response yang bukan JSON."  
+      });  
+    }  
 
-    try {
-      result = JSON.parse(responseText);
-    } catch (jsonError) {
-      console.error(
-        "XS-Pedia Create Invalid Response:",
-        responseText.slice(0, 1000)
-      );
+    if (!response.ok || !result?.success) {  
+      return res.status(400).json({  
+        success: false,  
+        message: result?.message || "Gagal membuat QRIS XS-Pedia."  
+      });  
+    }  
 
-      return res.status(502).json({
-        success: false,
-        message: responseText.trim().startsWith("<")
-          ? "XS-Pedia mengembalikan halaman HTML. Periksa XS_PEDIA_BASE_URL dan API endpoint."
-          : "XS-Pedia mengembalikan response yang bukan JSON."
-      });
-    }
+    // Sesuai struktur response docs baru: data.qr, data.qrisString, data.paymentId, dll.
+    const paymentData = result.data || {};
+    const paymentId = paymentData.paymentId || "";
+    const rawQrImage = paymentData.qr || "";  
+    const qrisString = paymentData.qrisString || "";  
+    const providerCreatedAt = paymentData.createdAt ? new Date(paymentData.createdAt).toISOString() : new Date().toISOString();  
 
-    if (!response.ok || !result?.success || !result?.data) {
-      console.error("XS-Pedia Create Error:", {
-        status: response.status,
-        result
-      });
+    if (!rawQrImage || !qrisString || !paymentId) {  
+      return res.status(502).json({  
+        success: false,  
+        message: "XS-Pedia tidak mengembalikan data QRIS lengkap."  
+      });  
+    }  
 
-      return res.status(400).json({
-        success: false,
-        message:
-          result?.message ||
-          result?.error ||
-          `Gagal membuat pembayaran QRIS XS-Pedia. HTTP ${response.status}`
-      });
-    }
+    // ================= ID TRANSAKSI =================  
+    const localTrxId = `XIAO-WEB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;  
 
-    // ================= DATA DARI XS-PEDIA =================
-    const providerPaymentId = String(
-      result.data.paymentId ||
-      result.data.id ||
-      ""
-    );
+    const customBgUrl = "https://files.catbox.moe/sh2bcj.png";  
 
-    const rawQrImage =
-      result.data.qr ||
-      result.data.qrImage ||
-      result.data.qr_image ||
-      "";
+    // ================= SIMPAN HISTORY =================  
+    const historyDataForDb = {  
+      id: localTrxId,  
+      reff_id: localTrxId,  
+      nominal: parsedNominal,  
 
-    const qrisString =
-      result.data.qrisString ||
-      result.data.qrString ||
-      result.data.qris_string ||
-      "";
+      // Kode unik ditampilkan sebagai biaya admin  
+      tambahan: kodeUnik,  
+      kode_unik: kodeUnik,  
+      fee: kodeUnik,  
+      fee_env: kodeUnik,  
+      fee_provider: 0,  
 
-    const providerCreatedAt = result.data.createdAt
-      ? new Date(result.data.createdAt)
-      : new Date();
+      total_amount: totalBayar,  
+      get_balance: saldoDiterima,  
 
-    const providerStatus = String(
-      result.data.status || "pending"
-    ).toLowerCase();
+      provider_amount: totalBayar,  
+      provider: "xs-pedia",  
+      provider_id: paymentId, // Menyimpan paymentId dari response docs baru
+      provider_reference_id: paymentId,  
+      provider_created_at: providerCreatedAt,  
+      provider_status: paymentData.status || "pending",  
+      provider_time: null,  
 
-    if (!providerPaymentId) {
-      console.error("XS-Pedia tidak mengembalikan paymentId:", result);
+      qris_string: qrisString,  
+      metode: "QRIS",  
+      status: "pending",  
+      qr_image: rawQrImage,  
+      bg_image: customBgUrl,  
+      created_at: new Date()  
+    };  
 
-      return res.status(502).json({
-        success: false,
-        message: "XS-Pedia tidak mengembalikan paymentId."
-      });
-    }
+    await tambahHistoryDeposit(user._id, historyDataForDb);  
 
-    if (!rawQrImage || !qrisString) {
-      console.error("XS-Pedia QRIS tidak lengkap:", result);
+    return res.status(200).json({  
+      success: true,  
+      data: {  
+        id: localTrxId,  
+        trx_id: localTrxId,  
+        reff_id: localTrxId,  
+        metode: "QRIS",  
+        nominal: parsedNominal,  
 
-      return res.status(502).json({
-        success: false,
-        message: "XS-Pedia tidak mengembalikan QRIS lengkap."
-      });
-    }
+        // Kode unik sebagai admin  
+        kode_unik: kodeUnik,  
+        tambahan: kodeUnik,  
+        fee: kodeUnik,  
+        fee_env: kodeUnik,  
+        fee_provider: 0,  
 
-    // ================= ID TRANSAKSI LOKAL =================
-    const localTrxId =
-      `XIAO-WEB-${Date.now()}-` +
-      `${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        total_amount: totalBayar,  
+        get_balance: saldoDiterima,  
 
-    // JANGAN DIUBAH
-    const customBgUrl =
-      "https://files.catbox.moe/sh2bcj.png";
-
-    // ================= SIMPAN HISTORY =================
-    const historyDataForDb = {
-      id: localTrxId,
-      reff_id: localTrxId,
-      nominal: parsedNominal,
-
-      // Kode unik tetap dianggap biaya admin
-      tambahan: kodeUnik,
-      kode_unik: kodeUnik,
-      fee: kodeUnik,
-      fee_env: kodeUnik,
-      fee_provider: 0,
-
-      total_amount: totalBayar,
-      get_balance: saldoDiterima,
-
-      provider_amount: totalBayar,
-      provider: "xs-pedia",
-
-      // ID ASLI DARI PROVIDER
-      provider_id: providerPaymentId,
-      provider_reference_id: providerPaymentId,
-
-      provider_created_at: providerCreatedAt,
-      provider_status: providerStatus,
-      provider_time: providerCreatedAt,
-
-      qris_string: qrisString,
-      metode: "QRIS",
-
-      status: "pending",
-
-      qr_image: rawQrImage,
-
-      // JANGAN DIUBAH
-      bg_image: customBgUrl,
-
-      created_at: new Date()
-    };
-
-    await tambahHistoryDeposit(
-      user._id,
-      historyDataForDb
-    );
-
-    // ================= RESPONSE KE FRONTEND =================
-    return res.status(200).json({
-      success: true,
-      data: {
-        id: localTrxId,
-        trx_id: localTrxId,
-        reff_id: localTrxId,
-
-        metode: "QRIS",
-        nominal: parsedNominal,
-
-        kode_unik: kodeUnik,
-        tambahan: kodeUnik,
-
-        // Kode unik tetap tampil sebagai biaya admin
-        fee: kodeUnik,
-        fee_env: kodeUnik,
-        fee_provider: 0,
-
-        total_amount: totalBayar,
-        get_balance: saldoDiterima,
-
-        qr_image: rawQrImage,
-        qris_string: qrisString,
-
-        // JANGAN DIUBAH
-        bg_image: customBgUrl,
-
-        status: "pending",
-
-        // Data provider
-        provider_id: providerPaymentId,
-        provider_reference_id: providerPaymentId,
-        provider_status: providerStatus
-      }
+        qr_image: rawQrImage,  
+        qris_string: qrisString,  
+        bg_image: customBgUrl,  
+        status: "pending"  
+      }  
     });
 
   } catch (err) {
     console.error("Deposit Create Error:", err);
 
-    if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        message: err.message
-      });
+    if (!res.headersSent) {  
+      return res.status(500).json({  
+        success: false,  
+        message: err.message  
+      });  
     }
   }
 });
 
-
 // ================= STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
+  const user = await User.findById(req.session.userId);
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: "Sesi tidak valid."
+    });
+  }
+
+  const { id } = req.body;
+
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      message: "ID diperlukan."
+    });
+  }
+
   try {
-    const user = await User.findById(req.session.userId);
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Sesi tidak valid."
-      });
-    }
-
-    const { id } = req.body;
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "ID diperlukan."
-      });
-    }
-
-    // ================= AMBIL DATA LOKAL =================
     let userWithHistory = await User.findOne(
-      {
-        _id: user._id,
-        "historyDeposit.id": id
-      },
-      {
-        "historyDeposit.$": 1
-      }
+      { _id: user._id, "historyDeposit.id": id },
+      { "historyDeposit.$": 1 }
     );
 
-    if (!userWithHistory?.historyDeposit?.length) {
-      return res.status(404).json({
-        success: false,
-        message: "Data tidak ditemukan."
-      });
-    }
+    if (!userWithHistory?.historyDeposit?.length) {  
+      return res.status(404).json({  
+        success: false,  
+        message: "Data tidak ditemukan."  
+      });  
+    }  
 
-    let localData = userWithHistory.historyDeposit[0];
+    let localData = userWithHistory.historyDeposit[0];  
+    let localStatus = String(localData.status || "pending").toLowerCase();  
 
-    let localStatus = String(
-      localData.status || "pending"
-    ).toLowerCase();
+    // ================= STATUS TERMINAL =================  
+    if (!["pending", "processing"].includes(localStatus)) {  
+      const nominal = Number(localData.nominal) || 0;  
+      const kodeUnik = Number(localData.kode_unik || localData.tambahan || localData.fee) || 0;  
+      const totalAmount = Number(localData.total_amount) > 0  
+        ? Number(localData.total_amount)  
+        : nominal + kodeUnik;  
 
-    // ================= STATUS TERMINAL LOKAL =================
-    if (!["pending", "processing"].includes(localStatus)) {
-      const nominal =
-        Number(localData.nominal) || 0;
+      return res.status(200).json({  
+        success: true,  
+        data: {  
+          id,  
+          trx_id: id,  
+          reff_id: localData.reff_id || localData.provider_reference_id || "-",  
+          nominal,  
+          kode_unik: kodeUnik,  
+          tambahan: kodeUnik,  
 
-      const kodeUnik =
-        Number(
-          localData.kode_unik ||
-          localData.tambahan ||
-          localData.fee
-        ) || 0;
+          // Kode unik tampil sebagai Biaya Admin  
+          fee: kodeUnik,  
+          fee_env: kodeUnik,  
+          fee_provider: 0,  
 
-      const totalAmount =
-        Number(localData.total_amount) > 0
-          ? Number(localData.total_amount)
-          : nominal + kodeUnik;
+          total_amount: totalAmount,  
+          get_balance: Number(localData.get_balance) || nominal,  
+          status: localStatus,  
+          metode: localData.metode || "QRIS",  
+          qr_image: localData.qr_image || null,  
+          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",  
+          qris_string: localData.qris_string || "",  
+          created_at: localData.created_at || null,  
+          provider_id: localData.provider_id || null,  
+          provider_reference_id: localData.provider_reference_id || null,  
+          provider_amount: Number(localData.provider_amount) || totalAmount,  
+          provider_status: localData.provider_status || null,  
+          provider_time: localData.provider_time || null  
+        }  
+      });  
+    }  
 
-      return res.status(200).json({
-        success: true,
-        data: {
-          id,
-          trx_id: id,
+    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";  
+    const paymentId = localData.provider_id;
 
-          reff_id:
-            localData.reff_id ||
-            localData.provider_reference_id ||
-            "-",
-
-          nominal,
-
-          kode_unik: kodeUnik,
-          tambahan: kodeUnik,
-
-          fee: kodeUnik,
-          fee_env: kodeUnik,
-          fee_provider: 0,
-
-          total_amount: totalAmount,
-
-          get_balance:
-            Number(localData.get_balance) ||
-            nominal,
-
-          status: localStatus,
-
-          metode:
-            localData.metode ||
-            "QRIS",
-
-          qr_image:
-            localData.qr_image ||
-            null,
-
-          // JANGAN DIUBAH
-          bg_image:
-            localData.bg_image ||
-            "https://files.catbox.moe/sh2bcj.png",
-
-          qris_string:
-            localData.qris_string ||
-            "",
-
-          created_at:
-            localData.created_at ||
-            null,
-
-          provider_id:
-            localData.provider_id ||
-            null,
-
-          provider_reference_id:
-            localData.provider_reference_id ||
-            null,
-
-          provider_amount:
-            Number(localData.provider_amount) ||
-            totalAmount,
-
-          provider_status:
-            localData.provider_status ||
-            null,
-
-          provider_time:
-            localData.provider_time ||
-            null
-        }
-      });
-    }
-
-    // ================= API CONFIG =================
-    const XS_BASE = (
-      process.env.XS_PEDIA_BASE_URL ||
-      "https://xspedia-payment.vercel.app"
-    ).replace(/\/+$/, "");
-
-    const XS_API_KEY =
-      process.env.XS_PEDIA_API_KEY;
-
-    if (!XS_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        message:
-          "XS_PEDIA_API_KEY belum disetting di server."
-      });
-    }
-
-    // ================= PAYMENT ID PROVIDER =================
-    const providerPaymentId =
-      localData.provider_id ||
-      localData.provider_reference_id;
-
-    if (!providerPaymentId) {
+    if (!paymentId) {
       return res.status(400).json({
         success: false,
-        message:
-          "Payment ID XS-Pedia tidak ditemukan pada transaksi."
+        message: "Payment ID provider tidak ditemukan pada transaksi ini."
       });
     }
 
-    // ================= CEK STATUS XS-PEDIA =================
-    const statusUrl =
-      `${XS_BASE}/api/v1/payments/` +
-      `${encodeURIComponent(providerPaymentId)}/status?refresh=1`;
+    // ================= CEK STATUS DETAIL XS-PEDIA (GET /api/v1/payments/{paymentId}/status?refresh=1) =================  
+    // Sesuai dokumentasi: gunakan x-payment-token jika dibutuhkan, atau parameter refresh=1 untuk live-check langsung
+    const statusUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(paymentId)}/status?refresh=1`;  
 
-    let response;
+    const headers = {  
+      Accept: "application/json",  
+      "User-Agent": "Mozilla/5.0"  
+    };
 
-    try {
-      response = await fetch(statusUrl, {
-        method: "GET",
-        headers: {
-          "x-api-key": XS_API_KEY,
-          "Accept": "application/json"
-        }
-      });
-    } catch (fetchError) {
-      console.error(
-        "XS-Pedia Status Fetch Error:",
-        fetchError
-      );
-
-      return res.status(502).json({
-        success: false,
-        message:
-          "Koneksi server ke XS-Pedia gagal."
-      });
+    // Jika token diperlukan oleh sistem tujuan melalui header x-payment-token
+    if (process.env.XS_PEDIA_TOKEN) {
+      headers["x-payment-token"] = process.env.XS_PEDIA_TOKEN;
     }
 
-    const responseText =
-      await response.text();
+    const response = await fetch(statusUrl, {  
+      method: "GET",  
+      headers  
+    });  
 
-    let result;
+    if (!response.ok) {  
+      return res.status(502).json({  
+        success: false,  
+        message: "Gagal mengambil status dari XS-Pedia."  
+      });  
+    }  
 
-    try {
-      result = JSON.parse(responseText);
-    } catch (jsonError) {
-      console.error(
-        "XS-Pedia Status Invalid Response:",
-        responseText.slice(0, 1000)
-      );
+    const responseText = await response.text();  
+    let result;  
 
-      return res.status(502).json({
-        success: false,
-        message: responseText.trim().startsWith("<")
-          ? "XS-Pedia mengembalikan HTML, bukan JSON."
-          : "Response status XS-Pedia bukan JSON."
-      });
-    }
+    try {  
+      result = JSON.parse(responseText);  
+    } catch (jsonError) {  
+      console.error("XS-Pedia Status Invalid JSON:", responseText.slice(0, 500));  
+      return res.status(502).json({  
+        success: false,  
+        message: "Response status XS-Pedia bukan JSON."  
+      });  
+    }  
 
-    if (
-      !response.ok ||
-      !result?.success ||
-      !result?.data
-    ) {
-      console.error(
-        "XS-Pedia Status Error:",
-        {
-          status: response.status,
-          result
-        }
-      );
+    if (!result?.success || !result.data) {  
+      return res.status(502).json({  
+        success: false,  
+        message: "Data status XS-Pedia tidak valid."  
+      });  
+    }  
 
-      return res.status(502).json({
-        success: false,
-        message:
-          result?.message ||
-          result?.error ||
-          `Gagal mengambil status XS-Pedia. HTTP ${response.status}`
-      });
-    }
+    const providerTrx = result.data;  
 
-    // ================= DATA PROVIDER =================
-    const providerData =
-      result.data;
+    // ================= PROSES STATUS =================  
+    if (providerTrx) {  
+      // Sesuaikan status mapping dari response docs baru (biasanya "paid", "success", "pending", "expired", dll)
+      let rawStatus = String(providerTrx.status || localStatus).toLowerCase();
+      const providerStatus = (rawStatus === "paid") ? "success" : rawStatus;  
 
-    const providerStatus =
-      String(
-        providerData.status ||
-        "pending"
-      ).toLowerCase();
+      // ================= SUCCESS =================  
+      if (providerStatus === "success") {  
+        const updateResult = await User.updateOne(  
+          {  
+            _id: user._id,  
+            historyDeposit: {  
+              $elemMatch: {  
+                id,  
+                status: {  
+                  $in: ["pending", "processing"]  
+                }  
+              }  
+            }  
+          },  
+          {  
+            $set: {  
+              "historyDeposit.$.status": "success",  
+              "historyDeposit.$.provider_id": String(providerTrx.paymentId || paymentId),  
+              "historyDeposit.$.provider_reference_id": String(providerTrx.paymentId || paymentId),  
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,  
+              "historyDeposit.$.provider_status": providerStatus,  
+              "historyDeposit.$.provider_time": providerTrx.paidAt || providerTrx.createdAt || null  
+            },  
+            $inc: {  
+              saldo: Number(localData.get_balance) || 0  
+            }  
+          }  
+        );  
 
-    const providerAmount =
-      Number(
-        providerData.amount
-      ) || Number(
-        localData.provider_amount
-      ) || Number(
-        localData.total_amount
-      ) || 0;
+        if (updateResult.modifiedCount > 0) {  
+          localStatus = "success";  
+        }  
+      }  
 
-    const providerReferenceId =
-      String(
-        providerData.transactionId ||
-        providerData.referenceId ||
-        providerData.reference_id ||
-        providerData.paymentId ||
-        providerPaymentId
-      );
+      // ================= FAILED / EXPIRED / CANCEL =================  
+      else if (  
+        ["failed", "expired", "cancel", "cancelled"].includes(providerStatus)  
+      ) {  
+        const updateResult = await User.updateOne(  
+          {  
+            _id: user._id,  
+            historyDeposit: {  
+              $elemMatch: {  
+                id,  
+                status: {  
+                  $in: ["pending", "processing"]  
+                }  
+              }  
+            }  
+          },  
+          {  
+            $set: {  
+              "historyDeposit.$.status": providerStatus,  
+              "historyDeposit.$.provider_id": String(providerTrx.paymentId || paymentId),  
+              "historyDeposit.$.provider_reference_id": String(providerTrx.paymentId || paymentId),  
+              "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,  
+              "historyDeposit.$.provider_status": providerStatus,  
+              "historyDeposit.$.provider_time": providerTrx.createdAt || null  
+            }  
+          }  
+        );  
 
-    const providerTime =
-      providerData.paidAt ||
-      providerData.updatedAt ||
-      null;
+        if (updateResult.modifiedCount > 0) {  
+          localStatus = providerStatus;  
+        }  
+      }  
+    }  
 
-    // ================= STATUS PAID =================
-    if (
-      providerStatus === "paid" ||
-      providerStatus === "success"
-    ) {
-      const updateResult =
-        await User.updateOne(
-          {
-            _id: user._id,
-            historyDeposit: {
-              $elemMatch: {
-                id,
-                status: {
-                  $in: [
-                    "pending",
-                    "processing"
-                  ]
-                }
-              }
-            }
-          },
-          {
-            $set: {
-              "historyDeposit.$.status":
-                "success",
+    // ================= AMBIL DATA TERBARU =================  
+    const refreshedUser = await User.findOne(  
+      { _id: user._id, "historyDeposit.id": id },  
+      { "historyDeposit.$": 1 }  
+    );  
 
-              "historyDeposit.$.provider_id":
-                String(
-                  providerData.paymentId ||
-                  providerPaymentId
-                ),
+    localData = refreshedUser?.historyDeposit?.[0] || localData;  
 
-              "historyDeposit.$.provider_reference_id":
-                providerReferenceId,
+    localStatus = String(  
+      localData.status || localStatus || "pending"  
+    ).toLowerCase();  
 
-              "historyDeposit.$.provider_amount":
-                providerAmount,
+    const nominal = Number(localData.nominal) || 0;  
 
-              "historyDeposit.$.provider_status":
-                providerStatus,
+    const kodeUnik = Number(  
+      localData.kode_unik ||  
+      localData.tambahan ||  
+      localData.fee  
+    ) || 0;  
 
-              "historyDeposit.$.provider_time":
-                providerTime
-            },
+    const totalAmount = Number(localData.total_amount) > 0  
+      ? Number(localData.total_amount)  
+      : nominal + kodeUnik;  
 
-            $inc: {
-              saldo:
-                Number(
-                  localData.get_balance
-                ) || 0
-            }
-          }
-        );
+    return res.status(200).json({  
+      success: true,  
+      data: {  
+        id,  
+        trx_id: id,  
+        reff_id: localData.reff_id || localData.provider_reference_id || "-",  
 
-      if (
-        updateResult.modifiedCount > 0
-      ) {
-        localStatus = "success";
-      }
-    }
+        nominal,  
 
-    // ================= STATUS CANCELLED =================
-    else if (
-      providerStatus === "cancelled" ||
-      providerStatus === "canceled" ||
-      providerStatus === "cancel" ||
-      providerStatus === "expired" ||
-      providerStatus === "failed"
-    ) {
-      const finalStatus =
-        providerStatus === "cancelled" ||
-        providerStatus === "canceled"
-          ? "cancel"
-          : providerStatus;
+        kode_unik: kodeUnik,  
+        tambahan: kodeUnik,  
 
-      const updateResult =
-        await User.updateOne(
-          {
-            _id: user._id,
-            historyDeposit: {
-              $elemMatch: {
-                id,
-                status: {
-                  $in: [
-                    "pending",
-                    "processing"
-                  ]
-                }
-              }
-            }
-          },
-          {
-            $set: {
-              "historyDeposit.$.status":
-                finalStatus,
+        // Tampilkan kode unik sebagai Biaya Admin  
+        fee: kodeUnik,  
+        fee_env: kodeUnik,  
+        fee_provider: 0,  
 
-              "historyDeposit.$.provider_id":
-                String(
-                  providerData.paymentId ||
-                  providerPaymentId
-                ),
+        total_amount: totalAmount,  
 
-              "historyDeposit.$.provider_reference_id":
-                providerReferenceId,
+        get_balance:  
+          Number(localData.get_balance) || nominal,  
 
-              "historyDeposit.$.provider_amount":
-                providerAmount,
+        status: localStatus,  
 
-              "historyDeposit.$.provider_status":
-                providerStatus,
+        metode:  
+          localData.metode || "QRIS",  
 
-              "historyDeposit.$.provider_time":
-                providerTime
-            }
-          }
-        );
+        qr_image:  
+          localData.qr_image || null,  
 
-      if (
-        updateResult.modifiedCount > 0
-      ) {
-        localStatus = finalStatus;
-      }
-    }
+        bg_image:  
+          localData.bg_image || "https://files.catbox.moe/sh2bcj.png",  
 
-    // ================= AMBIL DATA TERBARU =================
-    const refreshedUser =
-      await User.findOne(
-        {
-          _id: user._id,
-          "historyDeposit.id": id
-        },
-        {
-          "historyDeposit.$": 1
-        }
-      );
+        qris_string:  
+          localData.qris_string || "",  
 
-    localData =
-      refreshedUser?.historyDeposit?.[0] ||
-      localData;
+        created_at:  
+          localData.created_at || null,  
 
-    localStatus =
-      String(
-        localData.status ||
-        localStatus ||
-        "pending"
-      ).toLowerCase();
+        provider_id:  
+          localData.provider_id || null,  
 
-    const nominal =
-      Number(localData.nominal) || 0;
+        provider_reference_id:  
+          localData.provider_reference_id || null,  
 
-    const kodeUnik =
-      Number(
-        localData.kode_unik ||
-        localData.tambahan ||
-        localData.fee
-      ) || 0;
+        provider_amount:  
+          Number(localData.provider_amount) || totalAmount,  
 
-    const totalAmount =
-      Number(localData.total_amount) > 0
-        ? Number(localData.total_amount)
-        : nominal + kodeUnik;
+        provider_status:  
+          localData.provider_status || null,  
 
-    // ================= RESPONSE =================
-    return res.status(200).json({
-      success: true,
-      data: {
-        id,
-        trx_id: id,
-
-        reff_id:
-          localData.reff_id ||
-          localData.provider_reference_id ||
-          "-",
-
-        nominal,
-
-        kode_unik: kodeUnik,
-        tambahan: kodeUnik,
-
-        fee: kodeUnik,
-        fee_env: kodeUnik,
-        fee_provider: 0,
-
-        total_amount:
-          totalAmount,
-
-        get_balance:
-          Number(
-            localData.get_balance
-          ) || nominal,
-
-        status:
-          localStatus,
-
-        metode:
-          localData.metode ||
-          "QRIS",
-
-        qr_image:
-          localData.qr_image ||
-          null,
-
-        // JANGAN DIUBAH
-        bg_image:
-          localData.bg_image ||
-          "https://files.catbox.moe/sh2bcj.png",
-
-        qris_string:
-          localData.qris_string ||
-          "",
-
-        created_at:
-          localData.created_at ||
-          null,
-
-        provider_id:
-          localData.provider_id ||
-          String(providerPaymentId),
-
-        provider_reference_id:
-          localData.provider_reference_id ||
-          providerReferenceId,
-
-        provider_amount:
-          Number(
-            localData.provider_amount
-          ) || providerAmount,
-
-        provider_status:
-          localData.provider_status ||
-          providerStatus,
-
-        provider_time:
-          localData.provider_time ||
-          providerTime
-      }
+        provider_time:  
+          localData.provider_time || null  
+      }  
     });
 
   } catch (error) {
-    console.error(
-      "Error Status Check XS-Pedia:",
-      error
-    );
+    console.error("Error Status Check XS-Pedia:", error);
 
-    return res.status(500).json({
-      success: false,
-      message:
-        "Gagal memuat detail terbaru."
+    return res.status(500).json({  
+      success: false,  
+      message: "Gagal memuat detail terbaru."  
     });
   }
 });

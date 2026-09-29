@@ -352,6 +352,8 @@ async function settleDeposit(userId, trxId, status, balance = 0) {
 
   return r.modifiedCount > 0;
 }
+
+
 // ================= CREATE DEPOSIT XS-PEDIA =================
 router.get("/deposit/create", validateApiKey, async (req, res) => {
   const { user } = req;
@@ -374,8 +376,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     // Total pembayaran = nominal + kode unik
     const providerAmount = parsedNominal + kodeUnik;
 
-    // ================= API v1 CREATE PAYMENT =================
-    const createUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments`;
+    const createUrl = "https://xspedia-payment.vercel.app/api/v1/payments";
 
     let createRes;
 
@@ -384,12 +385,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
+          "Accept": "application/json",
           "User-Agent": "Mozilla/5.0"
         },
-        body: JSON.stringify({
-          amount: providerAmount
-        })
+        body: JSON.stringify({ amount: providerAmount })
       });
     } catch (e) {
       console.error("XS-Pedia Create Fetch Error:", e);
@@ -413,18 +412,19 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       });
     }
 
-    if (!createRes.ok || !result?.success) {
+    if (!createRes.ok || !result?.success || !result?.data) {
       return res.status(502).json({
         success: false,
-        message: result?.message || result?.error || "Gagal membuat QRIS."
+        message: result?.message || "Gagal membuat QRIS."
       });
     }
 
-    // Mapping payload dari response v1
-    const paymentData = result.data || {};
-    const rawQrImage = paymentData.qr || paymentData.image_url || paymentData.qr_image || "";
-    const qrisString = paymentData.qrisString || paymentData.qr_string || paymentData.qris_string || "";
-    const providerPaymentId = paymentData.paymentId || paymentData.id || null;
+    const providerData = result.data;
+    
+    // Menggunakan paymentId otomatis dari API Provider
+    const trxId = providerData.paymentId; 
+    const rawQrImage = providerData.qr || "";
+    const qrisString = providerData.qrisString || "";
 
     if (!rawQrImage || !qrisString)
       return res.status(502).json({
@@ -432,8 +432,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
         message: "QRIS XS-Pedia tidak lengkap."
       });
 
-    const trxId = `XIAO-API-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    const createdAt = new Date();
+    const createdAt = providerData.createdAt ? new Date(providerData.createdAt) : new Date();
     const nominalAsli = parsedNominal;
 
     // Kode unik dianggap sebagai Biaya Admin
@@ -480,10 +479,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
 
       provider_amount: providerAmount,
       provider: "xs-pedia",
-      provider_id: providerPaymentId,
-      provider_reference_id: providerPaymentId,
-      provider_status: paymentData.status || "pending",
-      provider_time: null,
+      provider_id: trxId,
+      provider_reference_id: trxId,
+      provider_status: providerData.status || "pending",
+      provider_time: createdAt,
 
       metode: "QRIS",
       status: "pending",
@@ -553,45 +552,147 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           return;
         }
 
-        // Gunakan target payment ID dari provider jika ada
-        const targetPaymentId = dep.provider_id || dep.id;
-        const checkUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
+        const historyUrl =
+          `${XS_PEDIA_BASE_URL}/api/history?token=${encodeURIComponent(XS_PEDIA_TOKEN)}`;
 
-        const checkRes = await fetch(checkUrl, {
-          method: "POST",
+        const checkRes = await fetch(historyUrl, {
+          method: "GET",
           headers: {
-            "Content-Type": "application/json",
             Accept: "application/json",
             "User-Agent": "Mozilla/5.0"
-          },
-          body: JSON.stringify({})
+          }
         });
 
         if (!checkRes.ok) return;
 
-        const checkText = await checkRes.text();
+        const historyText = await checkRes.text();
 
         let checkData;
 
         try {
-          checkData = JSON.parse(checkText);
+          checkData = JSON.parse(historyText);
         } catch (e) {
           console.error(
             "XS-Pedia Polling Invalid JSON:",
-            checkText.slice(0, 300)
+            historyText.slice(0, 300)
           );
           return;
         }
 
-        if (!checkData?.success || !checkData?.data) {
+        if (
+          !checkData?.success ||
+          !Array.isArray(checkData.data)
+        ) {
           return;
         }
 
-        const providerTrx = checkData.data;
-        const rawStatus = String(providerTrx.status || "").toLowerCase();
-        
-        // Konversi status 'paid' dari v1 ke 'success'
-        const apiStatus = rawStatus === "paid" ? "success" : rawStatus;
+        let providerTrx = null;
+
+        // ================= CARI PROVIDER ID =================
+        if (dep.provider_id) {
+          providerTrx = checkData.data.find(
+            x =>
+              String(x.id) ===
+              String(dep.provider_id)
+          );
+        }
+
+        // ================= CARI REFERENCE ID =================
+        if (
+          !providerTrx &&
+          dep.provider_reference_id
+        ) {
+          providerTrx = checkData.data.find(
+            x =>
+              String(x.reference_id) ===
+              String(dep.provider_reference_id)
+          );
+        }
+
+        // ================= CARI NOMINAL + WAKTU =================
+        if (!providerTrx) {
+          const targetAmount =
+            Number(dep.provider_amount) ||
+            Number(dep.total_amount) ||
+            0;
+
+          const createdTime =
+            new Date(dep.created_at).getTime();
+
+          const candidates = checkData.data
+            .filter(
+              x =>
+                Number(x.amount) ===
+                targetAmount
+            )
+            .filter(x => {
+              const providerTime =
+                new Date(x.time).getTime();
+
+              if (
+                !Number.isFinite(providerTime)
+              ) {
+                return false;
+              }
+
+              if (
+                !Number.isFinite(createdTime)
+              ) {
+                return true;
+              }
+
+              return (
+                providerTime >=
+                  createdTime -
+                  3 * 60 * 1000 &&
+                providerTime <=
+                  createdTime +
+                  30 * 60 * 1000
+              );
+            })
+            .sort(
+              (a, b) =>
+                new Date(a.time) -
+                new Date(b.time)
+            );
+
+          for (const candidate of candidates) {
+            const alreadyUsed =
+              await User.findOne({
+                "historyDeposit.provider_id":
+                  String(candidate.id)
+              }).select("_id");
+
+            if (!alreadyUsed) {
+              providerTrx = candidate;
+              break;
+            }
+
+            const sameDeposit =
+              await User.findOne({
+                _id: user._id,
+                historyDeposit: {
+                  $elemMatch: {
+                    id: trxId,
+                    provider_id:
+                      String(candidate.id)
+                  }
+                }
+              }).select("_id");
+
+            if (sameDeposit) {
+              providerTrx = candidate;
+              break;
+            }
+          }
+        }
+
+        if (!providerTrx) return;
+
+        const apiStatus =
+          String(
+            providerTrx.status || ""
+          ).toLowerCase();
 
         // ================= SUCCESS =================
         if (apiStatus === "success") {
@@ -618,15 +719,13 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
 
                   "historyDeposit.$.provider_id":
                     String(
-                      providerTrx.id || providerTrx.paymentId || targetPaymentId
+                      providerTrx.id
                     ),
 
                   "historyDeposit.$.provider_reference_id":
                     String(
-                      providerTrx.transactionId ||
                       providerTrx.reference_id ||
-                      providerTrx.id ||
-                      targetPaymentId
+                      providerTrx.id
                     ),
 
                   "historyDeposit.$.provider_amount":
@@ -638,8 +737,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
                     apiStatus,
 
                   "historyDeposit.$.provider_time":
-                    providerTrx.paidAt ||
-                    providerTrx.createdAt ||
+                    providerTrx.time ||
                     null
                 },
 
@@ -653,7 +751,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
             updateResult.modifiedCount > 0
           ) {
             console.log(
-              `Deposit SUCCESS ${trxId} provider=${providerTrx.id || targetPaymentId}`
+              `Deposit SUCCESS ${trxId} provider=${providerTrx.id}`
             );
           }
 
@@ -693,15 +791,13 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
 
                   "historyDeposit.$.provider_id":
                     String(
-                      providerTrx.id || providerTrx.paymentId || targetPaymentId
+                      providerTrx.id
                     ),
 
                   "historyDeposit.$.provider_reference_id":
                     String(
-                      providerTrx.transactionId ||
                       providerTrx.reference_id ||
-                      providerTrx.id ||
-                      targetPaymentId
+                      providerTrx.id
                     ),
 
                   "historyDeposit.$.provider_amount":
@@ -713,8 +809,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
                     apiStatus,
 
                   "historyDeposit.$.provider_time":
-                    providerTrx.paidAt ||
-                    providerTrx.createdAt ||
+                    providerTrx.time ||
                     null
                 }
               }
@@ -756,8 +851,6 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     });
   }
 });
-
-
 
 // ================= CEK STATUS DEPOSIT XS-PEDIA =================
 router.get("/deposit/status", validateApiKey, async (req, res) => {
@@ -894,20 +987,27 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
       });
     }
 
-    // ================= API v1 STATUS CHECK =================
-    const targetPaymentId = dep.provider_id || id;
-    const detailUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
+    // ================= XS TOKEN =================
+    if (!XS_PEDIA_TOKEN) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "XS_PEDIA_TOKEN belum disetting."
+      });
+    }
+
+    // ================= HISTORY XS-PEDIA =================
+    const historyUrl =
+      `${XS_PEDIA_BASE_URL}/api/history?token=${encodeURIComponent(XS_PEDIA_TOKEN)}`;
 
     const response = await fetch(
-      detailUrl,
+      historyUrl,
       {
-        method: "POST",
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0"
-        },
-        body: JSON.stringify({})
+        }
       }
     );
 
@@ -940,20 +1040,147 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
       });
     }
 
-    if (!result?.success || !result?.data) {
+    if (
+      !result?.success ||
+      !Array.isArray(result.data)
+    ) {
       return res.status(502).json({
         success: false,
         message:
-          "Data status XS-Pedia tidak valid."
+          "Data history XS-Pedia tidak valid."
       });
     }
 
-    const providerTrx = result.data;
+    // ================= CARI TRANSAKSI =================
+    let providerTrx = null;
+
+    if (dep.provider_id) {
+      providerTrx =
+        result.data.find(
+          x =>
+            String(x.id) ===
+            String(dep.provider_id)
+        );
+    }
+
+    if (
+      !providerTrx &&
+      dep.provider_reference_id
+    ) {
+      providerTrx =
+        result.data.find(
+          x =>
+            String(x.reference_id) ===
+            String(dep.provider_reference_id)
+        );
+    }
+
+    if (!providerTrx) {
+      const targetAmount =
+        Number(dep.provider_amount) ||
+        Number(dep.total_amount) ||
+        (
+          Number(dep.nominal) || 0
+        ) +
+        (
+          Number(
+            dep.kode_unik ||
+            dep.tambahan ||
+            dep.fee
+          ) || 0
+        );
+
+      const createdTime =
+        new Date(
+          dep.created_at
+        ).getTime();
+
+      const candidates =
+        result.data
+          .filter(
+            x =>
+              Number(x.amount) ===
+              targetAmount
+          )
+          .filter(x => {
+            const providerTime =
+              new Date(
+                x.time
+              ).getTime();
+
+            if (
+              !Number.isFinite(
+                providerTime
+              )
+            ) {
+              return false;
+            }
+
+            if (
+              !Number.isFinite(
+                createdTime
+              )
+            ) {
+              return true;
+            }
+
+            return (
+              providerTime >=
+                createdTime -
+                3 * 60 * 1000 &&
+              providerTime <=
+                createdTime +
+                30 * 60 * 1000
+            );
+          })
+          .sort(
+            (a, b) =>
+              new Date(a.time) -
+              new Date(b.time)
+          );
+
+      for (
+        const candidate of candidates
+      ) {
+        const alreadyUsed =
+          await User.findOne({
+            "historyDeposit.provider_id":
+              String(candidate.id)
+          }).select("_id");
+
+        if (!alreadyUsed) {
+          providerTrx =
+            candidate;
+          break;
+        }
+
+        const sameDeposit =
+          await User.findOne({
+            _id: user._id,
+            historyDeposit: {
+              $elemMatch: {
+                id,
+                provider_id:
+                  String(candidate.id)
+              }
+            }
+          }).select("_id");
+
+        if (sameDeposit) {
+          providerTrx =
+            candidate;
+          break;
+        }
+      }
+    }
 
     // ================= UPDATE STATUS =================
     if (providerTrx) {
-      const rawStatus = String(providerTrx.status || status).toLowerCase();
-      const providerStatus = rawStatus === "paid" ? "success" : rawStatus;
+      const providerStatus =
+        String(
+          providerTrx.status ||
+          status
+        ).toLowerCase();
 
       // ================= SUCCESS =================
       if (
@@ -982,15 +1209,13 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
 
               "historyDeposit.$.provider_id":
                 String(
-                  providerTrx.id || providerTrx.paymentId || targetPaymentId
+                  providerTrx.id
                 ),
 
               "historyDeposit.$.provider_reference_id":
                 String(
-                  providerTrx.transactionId ||
                   providerTrx.reference_id ||
-                  providerTrx.id ||
-                  targetPaymentId
+                  providerTrx.id
                 ),
 
               "historyDeposit.$.provider_amount":
@@ -1002,8 +1227,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
                 providerStatus,
 
               "historyDeposit.$.provider_time":
-                providerTrx.paidAt ||
-                providerTrx.createdAt ||
+                providerTrx.time ||
                 null
             },
 
@@ -1052,15 +1276,13 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
 
               "historyDeposit.$.provider_id":
                 String(
-                  providerTrx.id || providerTrx.paymentId || targetPaymentId
+                  providerTrx.id
                 ),
 
               "historyDeposit.$.provider_reference_id":
                 String(
-                  providerTrx.transactionId ||
                   providerTrx.reference_id ||
-                  providerTrx.id ||
-                  targetPaymentId
+                  providerTrx.id
                 ),
 
               "historyDeposit.$.provider_amount":
@@ -1072,8 +1294,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
                 providerStatus,
 
               "historyDeposit.$.provider_time":
-                providerTrx.paidAt ||
-                providerTrx.createdAt ||
+                providerTrx.time ||
                 null
             }
           }

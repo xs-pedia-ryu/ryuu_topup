@@ -353,7 +353,7 @@ async function settleDeposit(userId, trxId, status, balance = 0) {
 }
 
 
-// ================= CREATE DEPOSIT XS-PEDIA (API v1) =================
+// ================= CREATE DEPOSIT RESTII GOPAY =================
 router.get("/deposit/create", validateApiKey, async (req, res) => {
   const { user } = req;
   const { nominal } = req.query;
@@ -375,28 +375,23 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     // Total pembayaran = nominal + kode unik
     const providerAmount = parsedNominal + kodeUnik;
 
-    // ================= CREATE XS-PEDIA (API v1) =================
-    const createUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments`;
+    const createUrl = `https://restii.vercel.app/gopay/createpayment?apikey=RyuuXiao&amount=${encodeURIComponent(providerAmount)}`;
 
     let createRes;
 
     try {
       createRes = await fetch(createUrl, {
-        method: "POST",
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
           Accept: "application/json",
           "User-Agent": "Mozilla/5.0"
-        },
-        body: JSON.stringify({
-          amount: providerAmount
-        })
+        }
       });
     } catch (e) {
-      console.error("XS-Pedia Create Fetch Error:", e);
+      console.error("Restii Payment Create Fetch Error:", e);
       return res.status(502).json({
         success: false,
-        message: "Koneksi ke XS-Pedia gagal."
+        message: "Koneksi ke Provider Payment gagal."
       });
     }
 
@@ -407,69 +402,58 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     try {
       result = JSON.parse(createText);
     } catch (e) {
-      console.error("XS-Pedia Create Invalid JSON:", createText.slice(0, 500));
+      console.error("Restii Payment Create Invalid JSON:", createText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "Response XS-Pedia bukan JSON."
+        message: "Response Provider Payment bukan JSON."
       });
     }
 
-    if (!createRes.ok || !result?.success || !result?.data) {
+    if (!createRes.ok || !result?.success) {
       return res.status(502).json({
         success: false,
-        message: result?.message || result?.error || "Gagal membuat QRIS."
+        message: result?.message || "Gagal membuat QRIS."
       });
     }
 
-    // Mapping response data API v1
-    const paymentData = result.data;
-    const rawQrImage = paymentData.qr || "";
+    // Ambil data dari response API Restii
+    const paymentData = result.data || {};
+    const trxId = paymentData.paymentId; // ID transaksi otomatis dari API provider (e.g. xiao-api-XXXXXX)
+    const rawQrImage = paymentData.qrUrl || "";
     const qrisString = paymentData.qrisString || "";
-    const providerPaymentId = paymentData.paymentId;
 
-    if (!rawQrImage || !qrisString || !providerPaymentId) {
+    if (!trxId || !rawQrImage || !qrisString) {
       return res.status(502).json({
         success: false,
-        message: "QRIS XS-Pedia tidak lengkap."
+        message: "Response QRIS dari provider tidak lengkap."
       });
     }
 
-    // ================= ID TRANSAKSI DARI PROVIDER PAYMENT ID =================
-    const trxId = providerPaymentId; // otomatis mengikuti paymentId dari API v1
-
-    const rawCreatedAt = paymentData.createdAt;
-    const createdAt = rawCreatedAt
-      ? new Date(typeof rawCreatedAt === "number" ? rawCreatedAt : rawCreatedAt)
-      : new Date();
-
-    const rawExpiresAt = paymentData.expiresAt;
-    const expiresAt = rawExpiresAt
-      ? new Date(typeof rawExpiresAt === "number" ? rawExpiresAt : rawExpiresAt)
-      : null;
-
+    const createdAt = paymentData.createdAt ? new Date(paymentData.createdAt) : new Date();
     const nominalAsli = parsedNominal;
+
+    // Kode unik dianggap sebagai Biaya Admin
     const feeProvider = 0;
     const additionalFee = kodeUnik;
     const totalBayar = providerAmount;
     const totalFee = kodeUnik;
     const finalBalance = nominalAsli;
-    const bgUrl = typeof DEFAULT_BG_URL !== "undefined" ? DEFAULT_BG_URL : "https://files.catbox.moe/sh2bcj.png";
+    const bgUrl = DEFAULT_BG_URL;
 
     // ================= BACKGROUND / COMPOSITE =================
     let compositeQrUrl = rawQrImage;
 
-    if (typeof createQrisComposite === "function") {
-      try {
-        const generated = await createQrisComposite({
-          trxId,
-          qrisImageUrl: rawQrImage,
-          qrisString
-        });
+    try {
+      const generated = await createQrisComposite({
+        trxId,
+        qrisImageUrl: rawQrImage,
+        qrisString
+      });
 
-        compositeQrUrl = `${req.protocol}://${req.get("host")}/media/generated-qris/${generated.filename}`;
-      } catch (e) {
-        console.error("QR Composite Error:", e.message);
-      }
+      compositeQrUrl =
+        `${req.protocol}://${req.get("host")}/media/generated-qris/${generated.filename}`;
+    } catch (e) {
+      console.error("QR Composite Error:", e.message);
     }
 
     // ================= HISTORY =================
@@ -482,7 +466,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       tambahan: kodeUnik,
       kode_unik: kodeUnik,
 
-      // Biaya Admin
+      // Ditampilkan sebagai Biaya Admin
       fee: totalFee,
       fee_env: kodeUnik,
       fee_provider: feeProvider,
@@ -491,13 +475,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       get_balance: finalBalance,
 
       provider_amount: providerAmount,
-      provider: "xs-pedia",
-      provider_id: providerPaymentId,
-      provider_reference_id: providerPaymentId,
+      provider: "restii-gopay",
+      provider_id: trxId,
+      provider_reference_id: trxId,
       provider_status: paymentData.status || "pending",
-      provider_created_at: createdAt,
-      provider_expires_at: expiresAt,
-      expires_in_ms: paymentData.expiresInMs || 900000,
       provider_time: null,
 
       metode: "QRIS",
@@ -539,13 +520,11 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
         qris_string: qrisString,
         bg_image: bgUrl,
         status: "pending",
-        expires_at: expiresAt,
-        expires_in_ms: paymentData.expiresInMs || 900000,
         created_at: createdAt
       }
     });
 
-    // ================= POLLING OTOMATIS (API v1 STATUS CHECK) =================
+    // ================= POLLING OTOMATIS =================
     const intervalId = setInterval(async () => {
       try {
         const h = await User.findOne(
@@ -566,42 +545,48 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           return;
         }
 
-        // Live Status Check ke Endpoint API v1
-        const statusUrl = `${XS_PEDIA_BASE_URL}/api/v1/payments/${encodeURIComponent(trxId)}/status`;
+        // Cek status via API Restii
+        const checkUrl = `https://restii.vercel.app/gopay/checkstatus?apikey=RyuuXiao&paymentId=${encodeURIComponent(trxId)}`;
 
-        const checkRes = await fetch(statusUrl, {
-          method: "POST",
+        const checkRes = await fetch(checkUrl, {
+          method: "GET",
           headers: {
-            "Content-Type": "application/json",
             Accept: "application/json",
             "User-Agent": "Mozilla/5.0"
-          },
-          body: JSON.stringify({})
+          }
         });
 
         if (!checkRes.ok) return;
 
-        const checkData = await checkRes.json();
-        if (!checkData?.success || !checkData?.data) return;
+        const checkText = await checkRes.text();
+
+        let checkData;
+
+        try {
+          checkData = JSON.parse(checkText);
+        } catch (e) {
+          console.error("Restii Polling Invalid JSON:", checkText.slice(0, 300));
+          return;
+        }
+
+        if (!checkData?.success || !checkData.data) {
+          return;
+        }
 
         const providerTrx = checkData.data;
-        const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
-        const apiStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
+        const apiStatus = String(providerTrx.status || "").toLowerCase();
 
-        // ================= SUCCESS =================
-        if (apiStatus === "success") {
-          let pTime = providerTrx.paidAt || providerTrx.createdAt || null;
-          if (typeof pTime === "number") {
-            pTime = new Date(pTime).toISOString();
-          }
-
+        // ================= SUCCESS / PAID =================
+        if (apiStatus === "success" || apiStatus === "paid" || apiStatus === "settlement") {
           const updateResult = await User.updateOne(
             {
               _id: user._id,
               historyDeposit: {
                 $elemMatch: {
                   id: trxId,
-                  status: { $in: ["pending", "processing"] }
+                  status: {
+                    $in: ["pending", "processing"]
+                  }
                 }
               }
             },
@@ -609,12 +594,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
               $set: {
                 "historyDeposit.$.status": "success",
                 "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(
-                  providerTrx.transactionId || providerTrx.id || trxId
-                ),
-                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
-                "historyDeposit.$.provider_status": apiStatus,
-                "historyDeposit.$.provider_time": pTime
+                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || trxId),
+                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
+                "historyDeposit.$.provider_status": "success",
+                "historyDeposit.$.provider_time": providerTrx.paidAt || providerTrx.createdAt || null
               },
               $inc: {
                 saldo: finalBalance
@@ -623,7 +606,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           );
 
           if (updateResult.modifiedCount > 0) {
-            console.log(`Deposit SUCCESS ${trxId} provider=${providerTrx.id || trxId}`);
+            console.log(`Deposit SUCCESS ${trxId}`);
           }
 
           clearInterval(intervalId);
@@ -638,7 +621,9 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
               historyDeposit: {
                 $elemMatch: {
                   id: trxId,
-                  status: { $in: ["pending", "processing"] }
+                  status: {
+                    $in: ["pending", "processing"]
+                  }
                 }
               }
             },
@@ -646,11 +631,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
               $set: {
                 "historyDeposit.$.status": apiStatus,
                 "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(
-                  providerTrx.transactionId || providerTrx.id || trxId
-                ),
-                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
-                "historyDeposit.$.provider_status": apiStatus
+                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || trxId),
+                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
+                "historyDeposit.$.provider_status": apiStatus,
+                "historyDeposit.$.provider_time": providerTrx.paidAt || null
               }
             }
           );
@@ -662,16 +646,18 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           clearInterval(intervalId);
         }
       } catch (e) {
-        console.error("XS-Pedia Polling Error:", e.message);
+        console.error("Restii Polling Error:", e.message);
       }
     }, 10000);
 
-    // Otomatis menghentikan polling sesuai durasi expired (default 15 menit + buffer 1 menit)
-    const timeoutMs = paymentData.expiresInMs || 15 * 60 * 1000;
-    setTimeout(() => clearInterval(intervalId), timeoutMs + 60000);
+    // Maksimal polling 30 menit
+    setTimeout(
+      () => clearInterval(intervalId),
+      30 * 60 * 1000
+    );
 
   } catch (error) {
-    console.error("XS-Pedia Deposit Create Error:", error);
+    console.error("Restii Deposit Create Error:", error);
 
     return res.status(500).json({
       success: false,

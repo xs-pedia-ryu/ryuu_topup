@@ -1914,6 +1914,34 @@ main, .vp-main-container, .vp-main-content {
 }
 </style>
 
+
+<style id="dashboard-mobile-redesign">
+.dash-hero{background:linear-gradient(135deg,#0ea5e9,#0284c7);color:#fff;border-radius:1.5rem;padding:1.5rem;margin-bottom:1rem;box-shadow:0 8px 24px rgba(2,132,199,.25)}
+.dash-hero-title{font-family:var(--vp-font-heading);font-weight:700;font-size:1.6rem;line-height:1.3;margin:0 0 .5rem;color:#fff}
+.dash-hero-sub{font-size:1rem;margin:0 0 1.1rem;opacity:.95;color:#fff}
+.dash-hero-btn{display:flex;align-items:center;justify-content:center;gap:.5rem;background:#fff;color:#0284c7;font-weight:600;font-size:1.05rem;padding:.8rem 1rem;border-radius:1rem;text-decoration:none}
+.dash-hero-btn:hover{color:#0369a1}
+.dash-stat-card{background:var(--vp-card-bg);border:1px solid var(--vp-border-color);border-radius:1.5rem;padding:1.25rem 1.4rem;margin-bottom:1rem;box-shadow:var(--vp-shadow-sm)}
+.dash-stat-label{display:flex;align-items:center;gap:.5rem;color:var(--vp-text-muted);font-size:1rem;margin-bottom:.35rem}
+.dash-stat-value{font-family:var(--vp-font-heading);font-weight:700;font-size:2rem;color:var(--vp-dark);line-height:1.2}
+.dash-stat-value.dash-blue{color:#0284c7}
+.dash-stat-value small{font-size:.95rem;font-weight:400;color:var(--vp-text-muted)}
+
+/* Bottom navigation */
+.bnav{display:none}
+@media (max-width:991.98px){
+  .bnav{display:flex;position:fixed;left:0;right:0;bottom:0;height:68px;background:var(--vp-card-bg);border-top:1px solid var(--vp-border-color);box-shadow:0 -4px 20px rgba(0,0,0,.08);z-index:1020;align-items:center;justify-content:space-around;padding:0 .25rem env(safe-area-inset-bottom)}
+  .bnav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--vp-text-muted);text-decoration:none;font-size:.78rem;font-weight:600;height:100%}
+  .bnav a i{font-size:1.5rem;line-height:1}
+  .bnav a.active{color:#0284c7}
+  .bnav .bnav-center{position:relative;overflow:visible}
+  .bnav .bnav-fab{position:absolute;top:-30px;left:50%;transform:translateX(-50%);width:68px;height:68px;border-radius:50%;background:var(--vp-card-bg);box-shadow:0 -2px 12px rgba(0,0,0,.12);display:flex;align-items:center;justify-content:center;border:5px solid var(--vp-card-bg)}
+  .bnav .bnav-fab span{width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#0ea5e9,#0369a1);display:flex;align-items:center;justify-content:center;color:#fff}
+  .bnav .bnav-fab i{font-size:1.6rem;color:#fff}
+  .bnav .bnav-center .bnav-text{position:absolute;bottom:8px;left:0;right:0;text-align:center;color:var(--vp-dark)}
+  body{padding-bottom:90px}
+}
+</style>
 </head>
 <body data-theme="light">
     <div class="vp-wrapper">
@@ -2055,26 +2083,27 @@ main, .vp-main-container, .vp-main-content {
                         </div>
                     </section>
 
-                    <section class="vp-section vp-user-summary-card content-loaded" style="animation-delay: 0.1s;">
-                        <div class="vp-user-summary-item saldo-item">
-                            <div class="label">
-                                <i class="bi bi-wallet2"></i>
-                                <span>Saldo</span>
-                            </div>
-                            <div class="value" id="userSaldo">
-                                <div class="vp-loading-shimmer" style="width:100px; height:20px;"></div>
-                            </div>
+                    <section class="dash-hero content-loaded" style="animation-delay: 0.1s;">
+                        <h2 class="dash-hero-title"><span id="greetingText">Selamat datang</span>, <span id="userFullnameHero">Pengguna</span> <span class="dash-wave">&#128075;</span></h2>
+                        <p class="dash-hero-sub">Selamat datang kembali di Xiao-Store. Level: <strong id="userRole">...</strong></p>
+                        <a href="/order" class="dash-hero-btn"><i class="bi bi-cart3"></i> Order Nomor</a>
+                    </section>
+
+                    <section class="dash-stat-card content-loaded" style="animation-delay: 0.15s;">
+                        <div class="dash-stat-label"><i class="bi bi-wallet2"></i> Saldo</div>
+                        <div class="dash-stat-value dash-blue" id="userSaldo">
+                            <div class="vp-loading-shimmer" style="width:100px; height:28px;"></div>
                         </div>
-                        <div class="vp-user-summary-divider"></div>
-                        <div class="vp-user-summary-item level-item">
-                            <div class="label">
-                                <i class="bi bi-award-fill"></i>
-                                <span>Level</span>
-                            </div>
-                            <div class="value text-primary" id="userRole">
-                                <div class="vp-loading-shimmer" style="width:70px; height:20px;"></div>
-                            </div>
-                        </div>
+                    </section>
+
+                    <section class="dash-stat-card content-loaded" style="animation-delay: 0.2s;">
+                        <div class="dash-stat-label"><i class="bi bi-graph-up-arrow"></i> Total Deposit Berhasil</div>
+                        <div class="dash-stat-value" id="totalDepositSuccess">Rp 0</div>
+                    </section>
+
+                    <section class="dash-stat-card content-loaded" style="animation-delay: 0.25s;">
+                        <div class="dash-stat-label"><i class="bi bi-bag-check"></i> Order Berhasil</div>
+                        <div class="dash-stat-value"><span id="orderSuccessCount">0</span> <small id="orderSuccessAmount">(Rp 0)</small></div>
                     </section>
                                
 <section class="vp-section content-loaded d-none" style="display: none;">
@@ -2126,6 +2155,18 @@ main, .vp-main-container, .vp-main-content {
             </div>
 </div>
     </div>
+
+    
+    <nav class="bnav" aria-label="Navigasi bawah">
+        <a href="/dashboard" class="active"><i class="bi bi-house-door-fill"></i><span>Beranda</span></a>
+        <a href="/mutation-deposit"><i class="bi bi-clock-history"></i><span>Riwayat</span></a>
+        <a href="/order" class="bnav-center">
+            <div class="bnav-fab"><span><i class="bi bi-cart3"></i></span></div>
+            <span class="bnav-text">Order</span>
+        </a>
+        <a href="/deposit"><i class="bi bi-wallet2"></i><span>Top Up</span></a>
+        <a href="/profile"><i class="bi bi-person-fill"></i><span>Akun</span></a>
+    </nav>
 
     <div class="modal fade vp-notification-modal" id="notificationDetailModal" tabindex="-1" aria-labelledby="notificationDetailModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
@@ -2499,6 +2540,23 @@ const vpSidebar = document.getElementById('vpSidebar');
 
         function displayUserData(user) {
             document.getElementById('userSaldo').textContent = `Rp ${user.saldo.toLocaleString('id-ID')}`;
+            (function () {
+                const fmt = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+                const h = new Date().getHours();
+                const greet = h < 11 ? 'Selamat pagi' : h < 15 ? 'Selamat siang' : h < 18 ? 'Selamat sore' : 'Selamat malam';
+                const g = document.getElementById('greetingText'); if (g) g.textContent = greet;
+                const n = document.getElementById('userFullnameHero'); if (n) n.textContent = user.fullname || 'Pengguna';
+                const okDep = ['success', 'sukses', 'paid', 'completed', 'complete'];
+                const totalDep = (Array.isArray(user.historyDeposit) ? user.historyDeposit : [])
+                    .filter(d => okDep.includes(String(d.status || '').toLowerCase()))
+                    .reduce((t, d) => t + Number(d.get_balance ?? d.nominal ?? 0), 0);
+                const td = document.getElementById('totalDepositSuccess'); if (td) td.textContent = fmt(totalDep);
+                const okOrders = (Array.isArray(user.historyOrder) ? user.historyOrder : [])
+                    .filter(o => String(o.status || '').toLowerCase() === 'success');
+                const oc = document.getElementById('orderSuccessCount'); if (oc) oc.textContent = okOrders.length;
+                const oa = document.getElementById('orderSuccessAmount');
+                if (oa) oa.textContent = '(' + fmt(okOrders.reduce((t, o) => t + Number(o.price ?? o.harga ?? o.total ?? o.amount ?? 0), 0)) + ')';
+            })();
             document.getElementById('userRole').textContent = user.role.charAt(0).toUpperCase() + user.role.slice(1);
             
             const profileImgNav = document.getElementById('userProfileImageNav');

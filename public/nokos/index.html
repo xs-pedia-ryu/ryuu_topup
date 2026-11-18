@@ -133,12 +133,8 @@ select.small{width:auto;padding:.5rem 2.2rem .5rem 1rem;font-size:.9rem;border-r
 </nav>
 
 <script>
-/* ===== KONFIGURASI =====
-   API_BASE relatif (/api/dev) dipakai jika halaman ini satu domain dengan ditznesia.com.
-   PERINGATAN: API key di file HTML bisa dilihat siapa saja. Sebaiknya panggil lewat
-   backend/proxy Anda sendiri dan simpan key di server. */
-const API_BASE = 'https://www.ditznesia.com/api/dev';
-const API_KEY  = '6985b717a060a0906af01d335034b40f';
+/* Semua request lewat backend sendiri (/api/nokos). API key disimpan di .env server. */
+const API_BASE = '/api/nokos';
 const SERVERS_WITH_OPERATOR = ['1','4','6'];
 
 const $ = id => document.getElementById(id);
@@ -149,12 +145,18 @@ const rp = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>t.classList.remove('show'),2800); }
 
-async function api(path, params={}){
-  const q = new URLSearchParams({apikey: API_KEY, ...params});
-  const r = await fetch(`${API_BASE}/${path}?${q}`);
-  if(!r.ok) throw new Error('HTTP ' + r.status);
-  return r.json();
+async function request(path, opts={}){
+  const r = await fetch(API_BASE + path, { credentials:'same-origin', ...opts });
+  if(r.status === 401){ location.href = '/auth/login'; throw new Error('Silakan login'); }
+  let data = null;
+  try{ data = await r.json(); }catch(e){}
+  if(!r.ok) throw new Error((data && data.message) || ('HTTP ' + r.status));
+  return data;
 }
+const api = (path, params={}) => request(path + '?' + new URLSearchParams(params));
+const apiPost = (path, body) => request(path, {
+  method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+});
 
 /* ---- tema ---- */
 (function(){
@@ -312,24 +314,29 @@ function confirmBuy(s, qty){
 
 async function doBuy(s, qty, op){
   const btn = $('goBuy'); btn.disabled = true; btn.textContent = 'Memproses...';
-  const params = { server: $('server').value, country: state.country.code, service: s.id };
-  if(op) params.operator = op;
-  if(s.provider!=null) params.provider = s.provider;
-  const results = [];
-  for(let i=0;i<qty;i++){
-    try{ results.push(await api('order', params)); }
-    catch(e){ results.push({error: e.message}); break; }
-  }
-  const ok = results.filter(r=>r && !r.error && r.success!==false && r.status!=='error');
-  closeModal();
-  if(ok.length){
-    toast(`${ok.length} pesanan berhasil dibuat`);
-    fetch('/profile/users').then(r=>r.json()).then(d=>{ if(d.success&&d.user) $('saldo').textContent=rp(d.user.saldo); }).catch(()=>{});
+  const body = { server: $('server').value, country: state.country.code, service: s.id, qty };
+  if(op) body.operator = op;
+  if(s.provider!=null) body.provider = s.provider;
+  try{
+    const d = await apiPost('/order', body);
+    if(d.saldo!=null) $('saldo').textContent = rp(d.saldo);
+    showResult(d);
     loadServices();
-  }else{
-    const r = results[0] || {};
-    toast('Gagal: ' + (r.message || r.error || 'pesanan ditolak'));
+  }catch(e){
+    closeModal();
+    toast('Gagal: ' + e.message);
   }
+}
+
+function showResult(d){
+  const rows = (d.orders||[]).map((o,i)=>`
+    <div class="row"><span>Pesanan ${i+1}</span><span>${o.number?esc(o.number):'ID '+esc(o.id)}</span></div>`).join('');
+  $('modal').innerHTML = `
+    <h3>${d.success?'Pesanan Dibuat':'Gagal'}</h3>
+    <p style="color:var(--muted);margin-bottom:.6rem">${esc(d.message||'')}</p>
+    ${rows}
+    <div class="btns"><button class="btn" onclick="closeModal()">Tutup</button></div>`;
+  $('ov').classList.add('open');
 }
 
 $('server').onchange = loadCountries;

@@ -5,6 +5,73 @@ const cloudscraper = require("cloudscraper");
 const upload = multer();
 const app = express();
 const router = express.Router();
+
+
+// Ambil dependency secara lazy agar tidak terkena circular-import saat router
+// dipasang dari index.js. Pastikan index.js mengekspor User dan tambahHistoryOrder.
+function getMainDependencies() {
+  const main = require("../index.js");
+  if (!main.User) throw new Error("Model User tidak ditemukan pada export index.js");
+  if (typeof main.tambahHistoryOrder !== "function") {
+    throw new Error("tambahHistoryOrder tidak ditemukan pada export index.js");
+  }
+  return { User: main.User, tambahHistoryOrder: main.tambahHistoryOrder };
+}
+
+const BASE_URL = process.env.DITZNESIA_BASE_URL || "https://www.ditznesia.com/api/dev";
+const API_KEY = process.env.DITZNESIA_API_KEY;
+const MARKUP_PERCENT = Number(process.env.NOKOS_MARKUP_PERCENT || 0);
+const MARKUP_FLAT = Number(process.env.NOKOS_MARKUP_FLAT || 0);
+const OPERATOR_SERVERS = ["1", "4", "6"];
+
+const SAFE = /^[\w.\-]{1,64}$/;
+
+/* ---------- helper ---------- */
+function needLogin(req, res, next) {
+  if (!req.session || !req.session.userId) {
+    return res.status(401).json({ success: false, message: "Silakan login terlebih dahulu." });
+  }
+  next();
+}
+
+async function callDitz(path, params = {}) {
+  if (!API_KEY) throw Object.assign(new Error("DITZNESIA_API_KEY belum diatur di .env"), { config: true });
+  const r = await axios.get(`${BASE_URL}/${path}`, {
+    params: { apikey: API_KEY, ...params },
+    timeout: 20000,
+  });
+  return r.data;
+}
+
+const withMarkup = (price) =>
+  Math.ceil(Number(price || 0) * (1 + MARKUP_PERCENT / 100) + MARKUP_FLAT);
+
+const cache = new Map();
+async function cached(key, ttlMs, fn) {
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.t < ttlMs) return hit.v;
+  const v = await fn();
+  cache.set(key, { t: Date.now(), v });
+  return v;
+}
+
+function validate(q, needCountry) {
+  const server = String(q.server || "");
+  if (!/^[1-6]$/.test(server)) return { error: "Server tidak valid." };
+  const out = { server };
+  if (needCountry) {
+    const country = String(q.country || "");
+    if (!SAFE.test(country)) return { error: "Negara tidak valid." };
+    out.country = country;
+  }
+  return out;
+}
+
+function fail(res, err, fallback) {
+  console.error("[nokos]", err.config ? err.message : (err.response?.data || err.message));
+  if (err.config) return res.status(500).json({ success: false, message: "Konfigurasi server belum lengkap." });
+  return res.status(502).json({ success: false, message: fallback });
+}
 app.use(express.urlencoded({
   extended: true
 }));
@@ -48,10 +115,10 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
     // Metode QRIS
     const metodeFormatted = [
       {
-        metode: "QRIS",
+        metode: "qris",
         type: "ewallet",
         name: "QRIS All Payment (Otomatis)",
-        min: 10,
+        min: 100,
         max: 5000000,
         fee: 0,
         fee_persen: feePersen,
@@ -74,7 +141,7 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
     });
   }
 });
-// ================= BUAT TRANSAKSI DEPOSIT =================
+// ================= BUAT TRANSAKSI DEPOSIT (MYQRIS) =================
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -88,22 +155,30 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 10) {
+    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 100) {
       return res.status(400).json({
         success: false,
-        message: "Minimal deposit Rp10"
+        message: "Minimal deposit Rp100"
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
 
     // ================= KODE UNIK =================
     const kodeUnik = Math.floor(Math.random() * 250) + 1; // Nilai Rp1 - Rp250
     const totalBayar = parsedNominal + kodeUnik;
     const saldoDiterima = parsedNominal;
 
-    // ================= CREATE XS-PEDIA (API v1) =================
-    const createUrl = `${XS_BASE}/api/v1/payments`;
+    // ================= CREATE MYQRIS =================
+    const createUrl = `${MYQRIS_BASE}/api/deposit/create`;
 
     let response;
     try {
@@ -112,17 +187,19 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json",
+          "x-api-key": MYQRIS_API_KEY,
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          amount: totalBayar
+          amount: totalBayar,
+          payment_type: "qris"
         })
       });
     } catch (fetchError) {
-      console.error("XS-Pedia Create Fetch Error:", fetchError);
+      console.error("MyQris Create Fetch Error:", fetchError);
       return res.status(502).json({
         success: false,
-        message: "Koneksi server ke XS-Pedia gagal."
+        message: "Koneksi server ke MyQris gagal."
       });
     }
 
@@ -132,33 +209,35 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     try {
       result = JSON.parse(responseText);
     } catch (jsonError) {
-      console.error("XS-Pedia Create Invalid Response:", responseText.slice(0, 500));
+      console.error("MyQris Create Invalid Response (Bukan JSON):", responseText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "XS-Pedia mengembalikan response yang bukan JSON."
+        message: "Server MyQris mengembalikan HTML/Error (Kemungkinan salah URL Endpoint atau API Key)."
       });
     }
 
-    if (!response.ok || !result?.success || !result?.data) {
+    if (!response.ok || !result?.success || !result?.deposit) {
       return res.status(400).json({
         success: false,
-        message: result?.message || result?.error || "Gagal membuat QRIS XS-Pedia."
+        message: result?.message || result?.error || "Gagal membuat QRIS MyQris."
       });
     }
 
-    // Mapping sesuai struktur response API v1 terbaru
-    const paymentData = result.data;
-    const rawQrImage = paymentData.qr || "";
-    const qrisString = paymentData.qrisString || "";
-    const providerPaymentId = paymentData.paymentId;
+    // Mapping sesuai dokumentasi asli MyQris (/api/deposit/create)
+    const paymentData = result.deposit;
+    const rawQrImage = paymentData.qris_url || paymentData.qris_code_url || ""; 
+    const qrisString = paymentData.qr_string || "";
     
-    // Parsing timestamp MS (epoch) dari response API
-    const rawCreatedAt = paymentData.createdAt;
+    // ID Transaksi murni dari MyQris (berdasarkan dokumentasi menggunakan field 'id')
+    const providerPaymentId = paymentData.id || paymentData.deposit_id || paymentData.trx_id;
+    const localTrxId = providerPaymentId; 
+    
+    const rawCreatedAt = paymentData.created_at;
     const providerCreatedAt = rawCreatedAt 
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
       : new Date().toISOString();
 
-    const rawExpiresAt = paymentData.expiresAt;
+    const rawExpiresAt = paymentData.expired_at;
     const providerExpiresAt = rawExpiresAt
       ? new Date(typeof rawExpiresAt === 'number' ? rawExpiresAt : rawExpiresAt).toISOString()
       : null;
@@ -166,13 +245,12 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "XS-Pedia tidak mengembalikan QRIS / paymentId lengkap."
+        message: "MyQris tidak mengembalikan QRIS / ID lengkap."
       });
     }
 
-    // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
-    const localTrxId = providerPaymentId; // e.g. "xiao-api-483921"
-    const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
+    // Background URL sesuai permintaan terbaru Anda
+    const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
     // ================= SIMPAN HISTORY =================
     const historyDataForDb = {
@@ -181,18 +259,18 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       nominal: parsedNominal,
       tambahan: kodeUnik,
       kode_unik: kodeUnik,
-      fee: kodeUnik,
+      fee: paymentData.fee || 0,
       fee_env: kodeUnik,
-      fee_provider: 0,
-      total_amount: totalBayar,
+      fee_provider: paymentData.fee_amount || 0,
+      total_amount: paymentData.total_payment || totalBayar,
       get_balance: saldoDiterima,
       provider_amount: paymentData.amount || totalBayar,
-      provider: "xs-pedia",
+      provider: "myqris",
       provider_id: providerPaymentId,
       provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
       provider_expires_at: providerExpiresAt,
-      expires_in_ms: paymentData.expiresInMs || 900000,
+      expires_in_ms: 15 * 60 * 1000, 
       provider_status: paymentData.status || "pending",
       provider_time: null,
       qris_string: qrisString,
@@ -215,21 +293,21 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
         nominal: parsedNominal,
         kode_unik: kodeUnik,    
         tambahan: kodeUnik,    
-        fee: kodeUnik,    
+        fee: paymentData.fee || 0,    
         fee_env: kodeUnik,    
-        fee_provider: 0,    
-        total_amount: totalBayar,    
+        fee_provider: paymentData.fee_amount || 0,    
+        total_amount: paymentData.total_payment || totalBayar,    
         get_balance: saldoDiterima,    
         qr_image: rawQrImage,    
         qris_string: qrisString,    
         bg_image: customBgUrl,    
         status: paymentData.status || "pending",
         expires_at: providerExpiresAt,
-        expires_in_ms: paymentData.expiresInMs || 900000
+        expires_in_ms: 15 * 60 * 1000
       }
     });
 
-    // ================= BACKGROUND POLLING XS-PEDIA =================
+    // ================= BACKGROUND POLLING MYQRIS =================
     const intervalId = setInterval(async () => {
       try {
         const latestHistory = await User.findOne(
@@ -245,29 +323,29 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           return;
         }
 
-        // Live status-check via POST ke /api/v1/payments/{paymentId}/status
-        const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(localTrxId)}/status`;
+        const detailUrl = `${MYQRIS_BASE}/api/deposit/status`;
         const checkRes = await fetch(detailUrl, {
           method: "POST",
           headers: { 
             "Content-Type": "application/json",
             "Accept": "application/json", 
+            "x-api-key": MYQRIS_API_KEY,
             "User-Agent": "Mozilla/5.0" 
           },
-          body: JSON.stringify({})
+          body: JSON.stringify({
+            id: localTrxId // Sesuai dokumentasi: parameter 'id'
+          })
         });
 
         if (!checkRes.ok) return;
 
         const checkData = await checkRes.json();
-        if (!checkData?.success || !checkData?.data) return;
-
-        const providerTrx = checkData.data;
+        const providerTrx = checkData; 
         const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
-        const providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
+        const providerStatus = rawProviderStatus === "paid" || rawProviderStatus === "success" ? "success" : rawProviderStatus;
 
         if (providerStatus === "success") {
-          let pTime = providerTrx.paidAt || providerTrx.createdAt || null;
+          let pTime = providerTrx.settlement_time || providerTrx.created_at || null;
           if (typeof pTime === 'number') {
             pTime = new Date(pTime).toISOString();
           }
@@ -286,7 +364,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
               $set: {
                 "historyDeposit.$.status": "success",
                 "historyDeposit.$.provider_id": String(providerTrx.id || localTrxId),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionId || providerTrx.id || localTrxId),
+                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || localTrxId),
                 "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
                 "historyDeposit.$.provider_status": providerStatus,
                 "historyDeposit.$.provider_time": pTime
@@ -325,13 +403,11 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           clearInterval(intervalId);
         }
       } catch (e) {
-        console.error("XS-Pedia Polling Error:", e.message);
+        console.error("MyQris Polling Error:", e.message);
       }
     }, 10000);
 
-    // Otomatis menghentikan polling sesuai durasi expired (default 15 menit)
-    const timeoutMs = paymentData.expiresInMs || 15 * 60 * 1000;
-    setTimeout(() => clearInterval(intervalId), timeoutMs + 60000);
+    setTimeout(() => clearInterval(intervalId), 15 * 60 * 1000 + 60000);
 
   } catch (err) {
     console.error("Deposit Create Error:", err);
@@ -344,7 +420,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
   }
 });
 
-// ================= CEK STATUS DEPOSIT =================
+// ================= CEK STATUS DEPOSIT (MYQRIS) =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -403,7 +479,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           status: localStatus,
           metode: localData.metode || "QRIS",
           qr_image: localData.qr_image || null,
-          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+          bg_image: localData.bg_image || "https://files.catbox.moe/mbhgwo.png",
           qris_string: localData.qris_string || "",
           created_at: localData.created_at || null,
           expires_at: localData.provider_expires_at || null,
@@ -417,7 +493,15 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
 
     const fetchWithTimeout = async (url, options = {}, timeout = 5000) => {
       const controller = new AbortController();
@@ -433,28 +517,31 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     };
 
     let providerTrx = null;
-
-    // ================= CEK VIA POST /api/v1/payments/{paymentId}/status =================
     const targetPaymentId = localData.provider_id || id;
 
+    // ================= CEK VIA POST /api/deposit/status (MyQris) =================
     if (targetPaymentId) {
-      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
+      const detailUrl = `${MYQRIS_BASE}/api/deposit/status`;
       
       const detailRes = await fetchWithTimeout(detailUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json",
+          "x-api-key": MYQRIS_API_KEY,
           "User-Agent": "Mozilla/5.0"
         },
-        body: JSON.stringify({}) // Sesuai dokumentasi curl -d '{}'
+        body: JSON.stringify({
+          id: targetPaymentId // Sesuai dokumentasi curl MyQris: parameter 'id'
+        })
       });
 
       if (detailRes && detailRes.ok) {
         try {
           const detailData = await detailRes.json();
-          if (detailData?.success && detailData?.data) {
-            providerTrx = detailData.data;
+          // MyQris mengembalikan objek status langsung atau di dalam key
+          if (detailData) {
+            providerTrx = detailData.deposit || detailData;
           }
         } catch (e) {}
       }
@@ -463,19 +550,19 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     // ================= PROSES STATUS PROVIDER =================
     if (providerTrx) {
       let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();
-      // Mapping "paid" dari API ke status "success" internal
-      let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
+      // Mapping "paid" atau "success" dari API ke status internal "success"
+      let providerStatus = (rawProviderStatus === "paid" || rawProviderStatus === "success") ? "success" : rawProviderStatus;
 
-      const pId = String(providerTrx.id || targetPaymentId);
-      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
+      const pId = String(providerTrx.id || providerTrx.deposit_id || targetPaymentId);
+      const pRef = String(providerTrx.trx_id || pId);
       
-      // Parsing timestamp MS (epoch) dari response API status
-      let pPaidAt = providerTrx.paidAt || providerTrx.createdAt || null;
+      // Parsing timestamp dari response API status MyQris
+      let pPaidAt = providerTrx.settlement_time || providerTrx.created_at || null;
       if (typeof pPaidAt === 'number') {
         pPaidAt = new Date(pPaidAt).toISOString();
       }
 
-      let pExpiresAt = providerTrx.expiresAt || null;
+      let pExpiresAt = providerTrx.expired_at || null;
       if (typeof pExpiresAt === 'number') {
         pExpiresAt = new Date(pExpiresAt).toISOString();
       }
@@ -570,7 +657,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
         status: localStatus,
         metode: localData.metode || "QRIS",
         qr_image: localData.qr_image || null,
-        bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+        bg_image: localData.bg_image || "https://files.catbox.moe/mbhgwo.png",
         qris_string: localData.qris_string || "",
         created_at: localData.created_at || null,
         expires_at: localData.provider_expires_at || null,
@@ -584,23 +671,26 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error Status Check XS-Pedia:", error);
+    console.error("Error Status Check MyQris:", error);
     return res.status(500).json({
       success: false,
       message: "Gagal memuat detail terbaru."
     });
   }
 });
-
-// ================= CANCEL DEPOSIT (INTERNAL ONLY) =================
+// ================= CANCEL DEPOSIT (MYQRIS) =================
 router.post("/deposit/cancel", requireLogin, async (req, res) => {
-  const user = await User.findById(req.session.userId);
-  if (!user) return res.status(401).json({ success: false, message: "Sesi tidak valid." });
-
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ success: false, message: "ID diperlukan." });
-
   try {
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Sesi tidak valid." });
+    }
+
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, message: "ID diperlukan." });
+    }
+
     const userHistory = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -619,14 +709,64 @@ router.post("/deposit/cancel", requireLogin, async (req, res) => {
       });
     }
 
-    await editHistoryDeposit(user._id, id, "cancel");
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
+
+    const targetPaymentId = currentData.provider_id || id;
+    const cancelUrl = `${MYQRIS_BASE}/api/cancel`;
+
+    let response;
+    try {
+      response = await fetch(cancelUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "x-api-key": MYQRIS_API_KEY,
+          "User-Agent": "Mozilla/5.0"
+        },
+        body: JSON.stringify({
+          trx_id: targetPaymentId // Sesuai dokumentasi MyQris: parameter 'trx_id' wajib
+        })
+      });
+    } catch (fetchError) {
+      console.error("MyQris Cancel Fetch Error:", fetchError);
+      return res.status(502).json({
+        success: false,
+        message: "Koneksi server ke MyQris gagal."
+      });
+    }
+
+    const responseText = await response.text();
+    let result;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (jsonError) {
+      console.error("MyQris Cancel Invalid Response:", responseText.slice(0, 500));
+      return res.status(502).json({
+        success: false,
+        message: "MyQris mengembalikan response yang bukan JSON."
+      });
+    }
+
+    // Ubah status di database lokal via helper / update
+    await editHistoryDeposit(user._id, id, "cancelled");
 
     return res.status(200).json({
       success: true,
-      message: "Deposit berhasil dibatalkan.",
+      message: result?.message || "Deposit berhasil dibatalkan.",
       data: {
         id: id,
-        status: "cancel"
+        trx_id: id,
+        status: "cancelled"
       }
     });
 
@@ -651,7 +791,160 @@ const verifyApiKey = (req, res, next) => {
   }
   next();
 };
+/* ---------- GET /api/nokos/countries?server=6 ---------- */
+router.get("/countries", needLogin, async (req, res) => {
+  const v = validate(req.query, false);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+  try {
+    const data = await cached(`c:${v.server}`, 5 * 60 * 1000, () => callDitz("countries", { server: v.server }));
+    res.json(Array.isArray(data) ? data : data.data || []);
+  } catch (e) { fail(res, e, "Gagal mengambil daftar negara."); }
+});
 
+/* ---------- GET /api/nokos/operators?server=6&country=6 ---------- */
+router.get("/operators", needLogin, async (req, res) => {
+  const v = validate(req.query, true);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+  try {
+    const data = await cached(`o:${v.server}:${v.country}`, 5 * 60 * 1000, () =>
+      callDitz("operators", { server: v.server, country: v.country })
+    );
+    res.json(data);
+  } catch (e) { fail(res, e, "Gagal mengambil daftar operator."); }
+});
+
+/* ---------- GET /api/nokos/services?server=6&country=6 ---------- */
+async function getServices(server, country) {
+  const data = await cached(`s:${server}:${country}`, 20 * 1000, () =>
+    callDitz("services", { server, country })
+  );
+  const list = Array.isArray(data) ? data : data.data || [];
+  return list.map((s) => ({ ...s, price: withMarkup(s.price) })); // harga jual
+}
+
+router.get("/services", needLogin, async (req, res) => {
+  const v = validate(req.query, true);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+  try {
+    res.json(await getServices(v.server, v.country));
+  } catch (e) { fail(res, e, "Gagal mengambil daftar layanan."); }
+});
+
+/* ---------- POST /api/nokos/order ----------
+   body: { server, country, service, provider?, operator?, qty? }
+   Alur: cek harga di server -> potong saldo -> order ke ditznesia -> catat history.
+   Jika order ditolak, saldo dikembalikan otomatis.
+*/
+function isOk(d) {
+  if (!d || typeof d !== "object") return false;
+  if (d.success === false || d.status === false || d.error) return false;
+  const st = String(d.status ?? "").toLowerCase();
+  if (["error", "failed", "gagal", "false"].includes(st)) return false;
+  return true;
+}
+const pick = (d, keys) => {
+  for (const k of keys) {
+    const val = d?.[k] ?? d?.data?.[k] ?? d?.result?.[k];
+    if (val !== undefined && val !== null && val !== "") return val;
+  }
+  return null;
+};
+
+router.post("/order", needLogin, async (req, res) => {
+  const v = validate(req.body, true);
+  if (v.error) return res.status(400).json({ success: false, message: v.error });
+
+  const service = String(req.body.service || "");
+  if (!SAFE.test(service)) return res.status(400).json({ success: false, message: "Layanan tidak valid." });
+  const provider = req.body.provider != null && req.body.provider !== "" ? String(req.body.provider) : null;
+  if (provider && !SAFE.test(provider)) return res.status(400).json({ success: false, message: "Provider tidak valid." });
+  const operator = OPERATOR_SERVERS.includes(v.server) && SAFE.test(String(req.body.operator || ""))
+    ? String(req.body.operator) : null;
+  const qty = Math.min(5, Math.max(1, parseInt(req.body.qty, 10) || 1));
+
+  const userId = req.session.userId;
+  let User, tambahHistoryOrder;
+  try {
+    ({ User, tambahHistoryOrder } = getMainDependencies());
+  } catch (e) {
+    console.error("[nokos] dependency error:", e.message);
+    return res.status(500).json({ success: false, message: "Konfigurasi model server belum benar." });
+  }
+  if (userId === "custom-admin") return res.status(403).json({ success: false, message: "Akun admin tidak bisa membeli." });
+
+  let item;
+  try {
+    cache.delete(`s:${v.server}:${v.country}`); // harga & stok terbaru
+    const list = await getServices(v.server, v.country);
+    item = list.find((s) => String(s.id) === service && (provider == null || String(s.provider) === provider));
+  } catch (e) { return fail(res, e, "Gagal mengecek harga layanan."); }
+
+  if (!item) return res.status(404).json({ success: false, message: "Layanan tidak ditemukan." });
+  if (Number(item.count ?? 0) < 1) return res.status(400).json({ success: false, message: "Stok habis." });
+
+  const price = Number(item.price);
+  const name = item.service_name || item.produk || item.id;
+  const orders = [];
+  let message = null;
+
+  for (let i = 0; i < qty; i++) {
+    // 1) potong saldo secara atomik (tidak bisa minus)
+    const paid = await User.findOneAndUpdate(
+      { _id: userId, saldo: { $gte: price } },
+      { $inc: { saldo: -price } },
+      { new: true }
+    );
+    if (!paid) { message = "Saldo tidak cukup."; break; }
+
+    // 2) order ke ditznesia
+    const params = { server: v.server, country: v.country, service };
+    if (operator) params.operator = operator;
+    if (provider) params.provider = provider;
+
+    let data = null, pending = false, refund = false;
+    try {
+      data = await callDitz("order", params);
+      if (!isOk(data)) { refund = true; message = data?.message || data?.msg || "Order ditolak provider."; }
+    } catch (e) {
+      console.error("[nokos] order error:", e.response?.data || e.message);
+      if (e.response) { refund = true; message = e.response.data?.message || "Order ditolak provider."; }
+      else { pending = true; message = "Koneksi ke provider terputus, cek Riwayat sebelum mencoba lagi."; }
+    }
+
+    if (refund) {
+      await User.findByIdAndUpdate(userId, { $inc: { saldo: price } });
+      break;
+    }
+
+    // 3) catat history
+    const orderId = String(pick(data, ["id", "order_id", "orderId"]) || `NK${Date.now()}${i}`);
+    const number = pick(data, ["number", "phone", "nomor"]);
+    try {
+      await tambahHistoryOrder(userId, {
+        id: orderId,
+        reff_id: `NOKOS-${Date.now()}-${i}`,
+        layanan: `${name} (S${v.server})`,
+        code: service,
+        target: number ? String(number) : "-",
+        price,
+        status: "pending",
+        created_at: new Date(),
+      });
+    } catch (e) { console.error("[nokos] gagal catat history:", e.message); }
+
+    orders.push({ id: orderId, number, pending, raw: data });
+    if (pending) break;
+  }
+
+  const me = await User.findById(userId).select("saldo");
+  const ok = orders.length > 0;
+  res.status(ok ? 200 : 400).json({
+    success: ok,
+    message: ok ? (message || "Pesanan dibuat.") : (message || "Pesanan gagal."),
+    orders,
+    saldo: me ? me.saldo : null,
+  });
+});
 // ==========================================
 // ENDPOINT TAHAP 1: KIRIM EMAIL (/am/send)
 // ==========================================

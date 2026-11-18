@@ -1999,7 +1999,8 @@ module.exports = {
 app.use("/h2h", require("./endpoint/api"));
 app.use("/api/webtrx", require("./endpoint/bacend"));
 app.use("/admin", require("./endpoint/admin"));
-
+// Router NOKOS
+app.use("/api/nokos", require("./endpoint/nokos"));
 
 
 app.get("/api/notif", (req, res) => {

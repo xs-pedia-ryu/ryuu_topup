@@ -1,1 +1,339 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Beli Nomor - Xiao-Store</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f7fa;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#dbe3ee;
+  --blue:#0284c7;--blue-d:#0369a1;--blue-l:#e8f4fd;--green:#22c55e;
+}
+[data-theme="dark"]{--bg:#0f172a;--card:#1e293b;--text:#f1f5f9;--muted:#94a3b8;--border:#334155;--blue-l:#0c2a3f}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Manrope',sans-serif;background:var(--bg);color:var(--text);padding-bottom:96px;-webkit-font-smoothing:antialiased}
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:.75rem;padding:.9rem 1rem;background:var(--card);border-bottom:1px solid var(--border)}
+.topbar h1{font-family:'Poppins',sans-serif;font-size:1.25rem;font-weight:700;flex:1}
+.pill{display:flex;align-items:center;gap:.4rem;background:var(--blue-l);color:var(--blue);font-weight:700;padding:.55rem .9rem;border-radius:999px;text-decoration:none;font-size:.95rem}
+.icon-btn{background:none;border:0;color:var(--text);font-size:1.4rem;cursor:pointer}
+.wrap{max-width:720px;margin:0 auto;padding:1rem}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:1.5rem;padding:1.25rem}
+.step{display:flex;align-items:center;gap:.6rem;font-size:1.1rem;font-weight:600;margin:1.1rem 0 .6rem}
+.step:first-child{margin-top:0}
+.step .n{width:28px;height:28px;border-radius:50%;background:var(--blue);color:#fff;font-size:.85rem;display:grid;place-items:center;flex:none}
+.step .sort{margin-left:auto}
+.field,select{width:100%;padding:.85rem 1rem;border:1.5px solid var(--border);border-radius:1rem;background:var(--card);color:var(--text);font:inherit;font-size:1rem;outline:none}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%2364748b' viewBox='0 0 16 16'%3E%3Cpath d='M1.6 5.3 8 11.7l6.4-6.4-.8-.8L8 10.1 2.4 4.5z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 1rem center;padding-right:2.4rem}
+.field:focus,select:focus{border-color:var(--blue)}
+select.small{width:auto;padding:.5rem 2.2rem .5rem 1rem;font-size:.9rem;border-radius:999px}
+.sub{font-size:1rem;font-weight:600;margin:1.1rem 0 .6rem}
+.search{position:relative}
+.search i{position:absolute;left:1rem;top:50%;transform:translateY(-50%);color:var(--muted)}
+.search .field{padding-left:2.7rem}
+.dd{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--card);border:1px solid var(--border);border-radius:1rem;max-height:260px;overflow:auto;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.15);display:none}
+.dd.open{display:block}
+.dd div{padding:.7rem 1rem;cursor:pointer;display:flex;gap:.6rem;align-items:center}
+.dd div:hover{background:var(--blue-l)}
+.dd .empty{color:var(--muted);cursor:default}
+.list{margin-top:.9rem;max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:.8rem;padding-right:2px}
+.svc{position:relative;display:flex;align-items:center;gap:.9rem;border:1.5px solid var(--border);border-radius:1.25rem;padding:1rem;flex-wrap:wrap}
+.star{position:absolute;top:.4rem;left:.5rem;background:none;border:0;color:var(--muted);font-size:1.1rem;cursor:pointer}
+.star.on{color:#f59e0b}
+.ico{width:52px;height:52px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-size:1.6rem;flex:none;font-weight:700;margin-top:.8rem}
+.info{flex:1;min-width:140px}
+.info b{font-size:1.1rem;display:block;text-transform:lowercase}
+.info small{color:var(--muted);display:block;font-size:.85rem}
+.badge{display:inline-block;margin-top:.3rem;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:700}
+.b-g{background:#dcfce7;color:#15803d}.b-y{background:#fef3c7;color:#b45309}.b-r{background:#fee2e2;color:#be123c}
+.buy{display:flex;flex-direction:column;align-items:flex-end;gap:.4rem;margin-left:auto}
+.price{font-family:'Poppins',sans-serif;font-weight:700;color:var(--blue);font-size:1.15rem}
+.btns{display:flex;gap:.5rem}
+.btn{border:1.5px solid var(--blue);background:var(--blue);color:#fff;font-weight:700;border-radius:.8rem;padding:.55rem 1rem;cursor:pointer;font:inherit;font-weight:700}
+.btn:hover{background:var(--blue-d)}
+.btn.o{background:transparent;color:var(--blue)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.state{text-align:center;color:var(--muted);padding:2rem 1rem}
+.spin{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:s 1s linear infinite;margin:0 auto .6rem}
+@keyframes s{to{transform:rotate(360deg)}}
+/* modal + toast */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:100;padding:1rem}
+.ov.open{display:flex}
+.modal{background:var(--card);border-radius:1.5rem;padding:1.4rem;width:100%;max-width:400px}
+.modal h3{font-family:'Poppins',sans-serif;margin-bottom:.8rem}
+.row{display:flex;justify-content:space-between;padding:.4rem 0;border-bottom:1px dashed var(--border);gap:1rem}
+.row span:first-child{color:var(--muted)}
+.row span:last-child{text-align:right;font-weight:600;word-break:break-all}
+.modal .btns{margin-top:1rem}.modal .btn{flex:1}
+.toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%);background:#0f172a;color:#fff;padding:.7rem 1.1rem;border-radius:999px;font-size:.9rem;z-index:200;opacity:0;pointer-events:none;transition:.25s;max-width:90%;text-align:center}
+.toast.show{opacity:1}
+/* bottom nav */
+.bnav{position:fixed;left:0;right:0;bottom:0;height:68px;background:var(--card);border-top:1px solid var(--border);box-shadow:0 -4px 20px rgba(0,0,0,.08);z-index:60;display:flex;align-items:center;justify-content:space-around;padding-bottom:env(safe-area-inset-bottom)}
+.bnav a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--muted);text-decoration:none;font-size:.78rem;font-weight:600;height:100%;justify-content:center}
+.bnav a i{font-size:1.5rem;line-height:1}
+.bnav a.center{position:relative}
+.fab{position:absolute;top:-30px;left:50%;transform:translateX(-50%);width:68px;height:68px;border-radius:50%;background:var(--card);border:5px solid var(--card);box-shadow:0 -2px 12px rgba(0,0,0,.12)}
+.fab span{display:grid;place-items:center;width:100%;height:100%;border-radius:50%;background:linear-gradient(135deg,#0ea5e9,#0369a1);color:#fff}
+.fab i{color:#fff;font-size:1.6rem}
+.bnav a.center .t{position:absolute;bottom:8px;color:var(--text)}
+@media(min-width:992px){.bnav{display:none}body{padding-bottom:2rem}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <button class="icon-btn" onclick="history.back()" aria-label="Kembali"><i class="bi bi-arrow-left"></i></button>
+  <h1>Beli Nomor</h1>
+  <a href="/deposit" class="pill"><i class="bi bi-wallet2"></i><span id="saldo">Rp 0</span> <i class="bi bi-plus"></i></a>
+  <button class="icon-btn" id="themeBtn" aria-label="Tema"><i class="bi bi-sun"></i></button>
+</header>
 
+<main class="wrap">
+ <div class="panel">
+  <div class="step"><span class="n">1</span> Server</div>
+  <select id="server">
+    <option value="1">Server 1</option><option value="2">Server 2</option><option value="3">Server 3</option>
+    <option value="4">Server 4</option><option value="5">Server 5</option><option value="6" selected>Server 6</option>
+  </select>
+
+  <div class="step"><span class="n">2</span> Negara
+    <select class="small sort" id="sort">
+      <option value="default">Urutan default</option><option value="az">A - Z</option><option value="za">Z - A</option>
+    </select>
+  </div>
+  <div class="search">
+    <i class="bi bi-search"></i>
+    <input class="field" id="countryInput" placeholder="Cari negara..." autocomplete="off">
+    <div class="dd" id="countryDD"></div>
+  </div>
+
+  <div id="opBox">
+    <div class="sub">Operator</div>
+    <select id="operator"><option value="any">Random Operator</option></select>
+  </div>
+
+  <div class="step"><span class="n">3</span> Pilih layanan &amp; beli</div>
+  <div class="search">
+    <i class="bi bi-search"></i>
+    <input class="field" id="svcSearch" placeholder="Cari layanan (whatsapp, telegram, ...)" autocomplete="off">
+  </div>
+  <div class="list" id="list"><div class="state">Pilih negara terlebih dahulu.</div></div>
+ </div>
+</main>
+
+<div class="ov" id="ov"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+
+<nav class="bnav">
+  <a href="/dashboard"><i class="bi bi-house-door"></i><span>Beranda</span></a>
+  <a href="/mutation-deposit"><i class="bi bi-clock-history"></i><span>Riwayat</span></a>
+  <a href="/nokos" class="center"><div class="fab"><span><i class="bi bi-cart3"></i></span></div><span class="t">Beli OTP</span></a>
+  <a href="/deposit"><i class="bi bi-wallet2"></i><span>Top Up</span></a>
+  <a href="/profile"><i class="bi bi-person"></i><span>Akun</span></a>
+</nav>
+
+<script>
+/* ===== KONFIGURASI =====
+   API_BASE relatif (/api/dev) dipakai jika halaman ini satu domain dengan ditznesia.com.
+   PERINGATAN: API key di file HTML bisa dilihat siapa saja. Sebaiknya panggil lewat
+   backend/proxy Anda sendiri dan simpan key di server. */
+const API_BASE = 'https://www.ditznesia.com/api/dev';
+const API_KEY  = '6985b717a060a0906af01d335034b40f';
+const SERVERS_WITH_OPERATOR = ['1','4','6'];
+
+const $ = id => document.getElementById(id);
+const state = { countries: [], country: null, services: [], favs: [] };
+try { state.favs = JSON.parse(localStorage.getItem('nokosFavs') || '[]'); } catch(e){}
+
+const rp = n => 'Rp ' + Number(n||0).toLocaleString('id-ID');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>t.classList.remove('show'),2800); }
+
+async function api(path, params={}){
+  const q = new URLSearchParams({apikey: API_KEY, ...params});
+  const r = await fetch(`${API_BASE}/${path}?${q}`);
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+/* ---- tema ---- */
+(function(){
+  let t='light'; try{t=localStorage.getItem('nokosTheme')||'light'}catch(e){}
+  document.documentElement.setAttribute('data-theme',t);
+  $('themeBtn').onclick=()=>{
+    t = t==='light'?'dark':'light';
+    document.documentElement.setAttribute('data-theme',t);
+    try{localStorage.setItem('nokosTheme',t)}catch(e){}
+  };
+})();
+
+/* ---- saldo ---- */
+fetch('/profile/users').then(r=>r.json()).then(d=>{
+  if(d.success && d.user) $('saldo').textContent = rp(d.user.saldo);
+}).catch(()=>{});
+
+/* ---- negara ---- */
+async function loadCountries(){
+  state.country = null; state.services = [];
+  $('countryInput').value = '';
+  $('list').innerHTML = '<div class="state"><div class="spin"></div>Memuat negara...</div>';
+  try{
+    const data = await api('countries', {server: $('server').value});
+    state.countries = Array.isArray(data) ? data : (data.data || []);
+    if(!state.countries.length){ $('list').innerHTML='<div class="state">Negara tidak tersedia.</div>'; return; }
+    // default: Indonesia jika ada
+    const id = state.countries.find(c => /indonesia/i.test(c.name));
+    selectCountry(id || state.countries[0]);
+  }catch(e){
+    $('list').innerHTML = '<div class="state">Gagal memuat negara: '+esc(e.message)+'</div>';
+  }
+}
+
+function sortedCountries(){
+  const arr = [...state.countries], s = $('sort').value;
+  if(s==='az') arr.sort((a,b)=>a.name.localeCompare(b.name));
+  if(s==='za') arr.sort((a,b)=>b.name.localeCompare(a.name));
+  return arr;
+}
+function renderCountryDD(filter=''){
+  const f = filter.trim().toLowerCase();
+  const items = sortedCountries().filter(c => !f || c.name.toLowerCase().includes(f));
+  $('countryDD').innerHTML = items.length
+    ? items.map(c=>`<div data-code="${esc(c.code)}">${esc(c.flag||'')} ${esc(c.name)}</div>`).join('')
+    : '<div class="empty">Negara tidak ditemukan</div>';
+  $('countryDD').classList.add('open');
+}
+$('countryInput').addEventListener('focus', e=>{ e.target.select(); renderCountryDD(''); });
+$('countryInput').addEventListener('input', e=>renderCountryDD(e.target.value));
+$('countryDD').addEventListener('click', e=>{
+  const el = e.target.closest('[data-code]'); if(!el) return;
+  selectCountry(state.countries.find(c=>String(c.code)===el.dataset.code));
+});
+document.addEventListener('click', e=>{ if(!e.target.closest('.search')) $('countryDD').classList.remove('open'); });
+$('sort').onchange = ()=>{ if($('countryDD').classList.contains('open')) renderCountryDD($('countryInput').value); };
+
+function selectCountry(c){
+  if(!c) return;
+  state.country = c;
+  $('countryInput').value = `${c.flag||''} ${c.name}`.trim();
+  $('countryDD').classList.remove('open');
+  loadOperators(); loadServices();
+}
+
+/* ---- operator ---- */
+async function loadOperators(){
+  const hasOp = SERVERS_WITH_OPERATOR.includes($('server').value);
+  $('opBox').style.display = hasOp ? '' : 'none';
+  $('operator').innerHTML = '<option value="any">Random Operator</option>';
+  if(!hasOp || !state.country) return;
+  try{
+    const d = await api('operators', {server: $('server').value, country: state.country.code});
+    const ops = Array.isArray(d.operators) ? d.operators : [];
+    $('operator').innerHTML = ops.map(o=>`<option value="${esc(o)}">${o==='any'?'Random Operator':esc(o)}</option>`).join('') || '<option value="any">Random Operator</option>';
+  }catch(e){ /* tetap Random Operator */ }
+}
+
+/* ---- layanan ---- */
+async function loadServices(){
+  if(!state.country) return;
+  $('list').innerHTML = '<div class="state"><div class="spin"></div>Memuat layanan...</div>';
+  try{
+    const data = await api('services', {server: $('server').value, country: state.country.code});
+    state.services = Array.isArray(data) ? data : (data.data || []);
+    renderServices();
+  }catch(e){
+    $('list').innerHTML = '<div class="state">Gagal memuat layanan: '+esc(e.message)+'</div>';
+  }
+}
+const favKey = s => `${$('server').value}|${s.id}|${s.provider ?? ''}`;
+function rateBadge(r){
+  if(r==null) return '';
+  const cls = r>=50 ? 'b-g' : r>=10 ? 'b-y' : 'b-r';
+  return `<span class="badge ${cls}">OTP sukses ${esc(r)}%</span>`;
+}
+function renderServices(){
+  const q = $('svcSearch').value.trim().toLowerCase();
+  let items = state.services.filter(s => !q || String(s.service_name||s.produk||'').toLowerCase().includes(q) || String(s.id).toLowerCase().includes(q));
+  items.sort((a,b)=> (state.favs.includes(favKey(b))) - (state.favs.includes(favKey(a))));
+  if(!items.length){ $('list').innerHTML='<div class="state">Layanan tidak ditemukan.</div>'; return; }
+  $('list').innerHTML = items.map(s=>{
+    const name = s.service_name || s.produk || s.id;
+    const idx = state.services.indexOf(s);
+    const fav = state.favs.includes(favKey(s));
+    const stok = Number(s.count ?? s.stock ?? 0);
+    const isWA = /whatsapp|^wa$/i.test(name);
+    return `<div class="svc">
+      <button class="star ${fav?'on':''}" data-fav="${idx}" aria-label="Favorit"><i class="bi bi-star${fav?'-fill':''}"></i></button>
+      <div class="ico">${isWA?'<i class="bi bi-whatsapp"></i>':esc(String(name).charAt(0).toUpperCase())}</div>
+      <div class="info"><b>${esc(name)}</b>
+        <small>${s.provider!=null?'provider: '+esc(s.provider)+' &bull; ':''}Stok: ${stok.toLocaleString('id-ID')}</small>
+        ${rateBadge(s.rate_sms)}</div>
+      <div class="buy"><div class="price">${rp(s.price)}</div>
+        <div class="btns">
+          <button class="btn" data-buy="${idx}" data-qty="1" ${stok<1?'disabled':''}>Beli</button>
+          <button class="btn o" data-buy="${idx}" data-qty="5" ${stok<1?'disabled':''}>Beli 5&times;</button>
+        </div></div>
+    </div>`;
+  }).join('');
+}
+$('svcSearch').addEventListener('input', renderServices);
+$('list').addEventListener('click', e=>{
+  const f = e.target.closest('[data-fav]');
+  if(f){
+    const k = favKey(state.services[+f.dataset.fav]);
+    state.favs = state.favs.includes(k) ? state.favs.filter(x=>x!==k) : [...state.favs, k];
+    try{localStorage.setItem('nokosFavs', JSON.stringify(state.favs))}catch(e){}
+    renderServices(); return;
+  }
+  const b = e.target.closest('[data-buy]');
+  if(b) confirmBuy(state.services[+b.dataset.buy], +b.dataset.qty);
+});
+
+/* ---- pembelian ---- */
+function closeModal(){ $('ov').classList.remove('open'); }
+$('ov').addEventListener('click', e=>{ if(e.target===$('ov')) closeModal(); });
+
+function confirmBuy(s, qty){
+  const name = s.service_name || s.produk || s.id;
+  const op = SERVERS_WITH_OPERATOR.includes($('server').value) ? $('operator').value : null;
+  $('modal').innerHTML = `
+    <h3>Konfirmasi Pembelian</h3>
+    <div class="row"><span>Layanan</span><span>${esc(name)}</span></div>
+    <div class="row"><span>Negara</span><span>${esc(state.country.name)}</span></div>
+    <div class="row"><span>Server</span><span>${esc($('server').value)}</span></div>
+    ${op?`<div class="row"><span>Operator</span><span>${op==='any'?'Random':esc(op)}</span></div>`:''}
+    ${s.provider!=null?`<div class="row"><span>Provider</span><span>${esc(s.provider)}</span></div>`:''}
+    <div class="row"><span>Jumlah</span><span>${qty}&times;</span></div>
+    <div class="row"><span>Total</span><span>${rp(Number(s.price)*qty)}</span></div>
+    <div class="btns"><button class="btn o" onclick="closeModal()">Batal</button><button class="btn" id="goBuy">Beli</button></div>`;
+  $('ov').classList.add('open');
+  $('goBuy').onclick = () => doBuy(s, qty, op);
+}
+
+async function doBuy(s, qty, op){
+  const btn = $('goBuy'); btn.disabled = true; btn.textContent = 'Memproses...';
+  const params = { server: $('server').value, country: state.country.code, service: s.id };
+  if(op) params.operator = op;
+  if(s.provider!=null) params.provider = s.provider;
+  const results = [];
+  for(let i=0;i<qty;i++){
+    try{ results.push(await api('order', params)); }
+    catch(e){ results.push({error: e.message}); break; }
+  }
+  const ok = results.filter(r=>r && !r.error && r.success!==false && r.status!=='error');
+  closeModal();
+  if(ok.length){
+    toast(`${ok.length} pesanan berhasil dibuat`);
+    fetch('/profile/users').then(r=>r.json()).then(d=>{ if(d.success&&d.user) $('saldo').textContent=rp(d.user.saldo); }).catch(()=>{});
+    loadServices();
+  }else{
+    const r = results[0] || {};
+    toast('Gagal: ' + (r.message || r.error || 'pesanan ditolak'));
+  }
+}
+
+$('server').onchange = loadCountries;
+loadCountries();
+</script>
+</body>
+</html>

@@ -4,7 +4,16 @@ const express = require("express");
 const axios = require("axios");
 const router = express.Router();
 
-const { User, tambahHistoryOrder } = require("../index.js");
+// Ambil dependency secara lazy agar tidak terkena circular-import saat router
+// dipasang dari index.js. Pastikan index.js mengekspor User dan tambahHistoryOrder.
+function getMainDependencies() {
+  const main = require("../index.js");
+  if (!main.User) throw new Error("Model User tidak ditemukan pada export index.js");
+  if (typeof main.tambahHistoryOrder !== "function") {
+    throw new Error("tambahHistoryOrder tidak ditemukan pada export index.js");
+  }
+  return { User: main.User, tambahHistoryOrder: main.tambahHistoryOrder };
+}
 
 /* ================= KONFIGURASI (.env) =================
    DITZNESIA_API_KEY=xxxxxxxx
@@ -139,6 +148,13 @@ router.post("/order", needLogin, async (req, res) => {
   const qty = Math.min(5, Math.max(1, parseInt(req.body.qty, 10) || 1));
 
   const userId = req.session.userId;
+  let User, tambahHistoryOrder;
+  try {
+    ({ User, tambahHistoryOrder } = getMainDependencies());
+  } catch (e) {
+    console.error("[nokos] dependency error:", e.message);
+    return res.status(500).json({ success: false, message: "Konfigurasi model server belum benar." });
+  }
   if (userId === "custom-admin") return res.status(403).json({ success: false, message: "Akun admin tidak bisa membeli." });
 
   let item;

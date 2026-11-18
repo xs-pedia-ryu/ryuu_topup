@@ -150,7 +150,12 @@ async function request(path, opts={}){
   if(r.status === 401){ location.href = '/auth/login'; throw new Error('Silakan login'); }
   let data = null;
   try{ data = await r.json(); }catch(e){}
-  if(!r.ok) throw new Error((data && data.message) || ('HTTP ' + r.status));
+  if(!r.ok){
+    const msg = (data && data.message) || (r.status === 404
+      ? 'Endpoint /api/nokos tidak ditemukan. Periksa pemasangan router di server.'
+      : 'HTTP ' + r.status);
+    throw new Error(msg);
+  }
   return data;
 }
 const api = (path, params={}) => request(path + '?' + new URLSearchParams(params));
@@ -181,7 +186,7 @@ async function loadCountries(){
   $('list').innerHTML = '<div class="state"><div class="spin"></div>Memuat negara...</div>';
   try{
     const data = await api('countries', {server: $('server').value});
-    state.countries = Array.isArray(data) ? data : (data.data || []);
+    state.countries = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
     if(!state.countries.length){ $('list').innerHTML='<div class="state">Negara tidak tersedia.</div>'; return; }
     // default: Indonesia jika ada
     const id = state.countries.find(c => /indonesia/i.test(c.name));
@@ -230,7 +235,7 @@ async function loadOperators(){
   if(!hasOp || !state.country) return;
   try{
     const d = await api('operators', {server: $('server').value, country: state.country.code});
-    const ops = Array.isArray(d.operators) ? d.operators : [];
+    const ops = Array.isArray(d?.operators) ? d.operators : (Array.isArray(d?.data?.operators) ? d.data.operators : []);
     $('operator').innerHTML = ops.map(o=>`<option value="${esc(o)}">${o==='any'?'Random Operator':esc(o)}</option>`).join('') || '<option value="any">Random Operator</option>';
   }catch(e){ /* tetap Random Operator */ }
 }
@@ -241,7 +246,7 @@ async function loadServices(){
   $('list').innerHTML = '<div class="state"><div class="spin"></div>Memuat layanan...</div>';
   try{
     const data = await api('services', {server: $('server').value, country: state.country.code});
-    state.services = Array.isArray(data) ? data : (data.data || []);
+    state.services = Array.isArray(data) ? data : (Array.isArray(data?.data) ? data.data : []);
     renderServices();
   }catch(e){
     $('list').innerHTML = '<div class="state">Gagal memuat layanan: '+esc(e.message)+'</div>';
